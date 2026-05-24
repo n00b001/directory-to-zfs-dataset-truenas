@@ -470,12 +470,17 @@ def process_job(
         if dataset_exists(dataset):
             log_warn(f"Dataset exists → skipping data transfer: {dataset}")
             # Still ensure NFS share exists for existing datasets
+            nfs_ok = True
             if not nfs_share_exists(nfs_path):
                 log_step(f"[NFS] Creating share for: {nfs_path}")
-                create_nfs_share(
+                nfs_ok = create_nfs_share(
                     path=nfs_path,
                     comment=f"Migration share: {job_name}",
                 )
+            if nfs_ok:
+                log_ok(f"[NFS] Share ready: {nfs_path}")
+            else:
+                log_warn(f"[NFS] Failed to create share for: {nfs_path}")
             progress.advance(global_task)
             return
         log_step(f"Processing: {job_name}")
