@@ -3,6 +3,7 @@
 Targets: 100% branch coverage, 90% line coverage.
 All subprocess calls, filesystem operations, and network requests are mocked.
 """
+
 import json
 import signal
 import subprocess
@@ -117,16 +118,20 @@ class TestSigintHandler:
 
     def test_sigint_sets_shutting_down(self):
         zm.SHUTTING_DOWN = False
-        with patch("zfs_migration.kill_all_children"), \
-             patch("zfs_migration.log_error"), \
-             patch.object(sys, "exit"):
+        with (
+            patch("zfs_migration.kill_all_children"),
+            patch("zfs_migration.log_error"),
+            patch.object(sys, "exit"),
+        ):
             zm.sigint_handler(signal.SIGINT, None)
             assert zm.SHUTTING_DOWN is True
 
     def test_sigint_exits_130(self):
-        with patch("zfs_migration.kill_all_children"), \
-             patch("zfs_migration.log_error"), \
-             patch.object(sys, "exit") as mock_exit:
+        with (
+            patch("zfs_migration.kill_all_children"),
+            patch("zfs_migration.log_error"),
+            patch.object(sys, "exit") as mock_exit,
+        ):
             zm.sigint_handler(signal.SIGTERM, None)
             mock_exit.assert_called_once_with(130)
 
@@ -146,10 +151,12 @@ class TestGetZfsContext:
         data.mkdir(parents=True)
 
         with patch("zfs_migration.Path") as mock_path_cls:
+
             def path_side_effect(p):
                 if p == "/mnt":
                     return tmp_path / "tmp"
                 return Path(str(p))
+
             mock_path_cls.side_effect = path_side_effect
 
             pool, base = zm.get_zfs_context(Path(str(data)))
@@ -165,11 +172,13 @@ class TestGetZfsContext:
             data.mkdir(parents=True)
 
             with patch("zfs_migration.Path") as mock_path_cls:
+
                 def path_side_effect(p):
                     if p == "/mnt":
                         return fake_mnt
                     # Map the input path to our real temp dir
                     return data
+
                 mock_path_cls.side_effect = path_side_effect
 
                 pool, base = zm.get_zfs_context(data)
@@ -190,12 +199,15 @@ class TestGetZfsContext:
                 if p == "/mnt":
                     return fake_mnt
                 return fake_target
+
             mock_path_cls.side_effect = path_side_effect
 
             fake_target.resolve.return_value = fake_resolved
 
-            with patch("zfs_migration.log_error"), \
-                 patch.object(sys, "exit") as mock_exit:
+            with (
+                patch("zfs_migration.log_error"),
+                patch.object(sys, "exit") as mock_exit,
+            ):
                 zm.get_zfs_context(Path("/mnt/tank"))
                 mock_exit.assert_called_once_with(1)
 
@@ -211,12 +223,15 @@ class TestGetZfsContext:
                 if p == "/mnt":
                     return fake_mnt
                 return fake_target
+
             mock_path_cls.side_effect = path_side_effect
 
             fake_target.resolve.return_value = fake_resolved
 
-            with patch("zfs_migration.log_error"), \
-                 patch.object(sys, "exit") as mock_exit:
+            with (
+                patch("zfs_migration.log_error"),
+                patch.object(sys, "exit") as mock_exit,
+            ):
                 zm.get_zfs_context(Path("/home/user/data"))
                 mock_exit.assert_called_once_with(1)
 
@@ -331,9 +346,7 @@ class TestCreateDataset:
     @patch("zfs_migration.subprocess.run")
     def test_create_failure(self, mock_run, mock_exists):
         mock_exists.return_value = False
-        mock_run.return_value = MagicMock(
-            returncode=1, stderr="permission denied"
-        )
+        mock_run.return_value = MagicMock(returncode=1, stderr="permission denied")
         with pytest.raises(RuntimeError, match="permission denied"):
             zm.create_dataset("tank/data/fail")
 
@@ -367,7 +380,9 @@ class TestCreateNfsShare:
 
     @patch("zfs_migration.subprocess.run")
     def test_failure_returncode(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="permission denied")
+        mock_run.return_value = MagicMock(
+            returncode=1, stdout="", stderr="permission denied"
+        )
         with patch("zfs_migration.log_error"):
             assert zm.create_nfs_share("/mnt/tank/data") is False
 
@@ -395,7 +410,9 @@ class TestNfsShareExists:
 
     @patch("zfs_migration.subprocess.run")
     def test_exists(self, mock_run):
-        mock_run.return_value = MagicMock(returncode=0, stdout=json.dumps([{"id": 1}]), stderr="")
+        mock_run.return_value = MagicMock(
+            returncode=0, stdout=json.dumps([{"id": 1}]), stderr=""
+        )
         assert zm.nfs_share_exists("/mnt/tank/data") is True
 
     @patch("zfs_migration.subprocess.run")
@@ -447,9 +464,9 @@ class FakePopen:
         self.args = args
         self._on_wait = on_wait
         # Join lines with newlines; each byte read returns one char
-        self._data = b"\n".join(
-            line.encode() for line in self.output_lines
-        ) + (b"\n" if self.output_lines else b"")
+        self._data = b"\n".join(line.encode() for line in self.output_lines) + (
+            b"\n" if self.output_lines else b""
+        )
         self._pos = 0
         self.stdout = MagicMock()
         self.stdout.read.side_effect = self._read_byte
@@ -474,7 +491,7 @@ class FakePopen:
     def communicate(self, input=None, timeout=None):
         """Return (stdout, stderr) for subprocess.run compatibility."""
         # Consume remaining data as stdout
-        remaining = self._data[self._pos:]
+        remaining = self._data[self._pos :]
         self._pos = len(self._data)
         return (remaining, b"")
 
@@ -495,9 +512,11 @@ class TestRunTransferWithProgress:
     @patch("zfs_migration.progress.update")
     def test_successful_transfer(self, mock_progress, mock_popen):
         """Test successful rclone transfer with progress line."""
-        popen = self._make_popen([
-            "Transferred:    1.234 GiB / 10.000 GiB, 12.3%, 100.0 MiB/s, ETA 0m30s",
-        ])
+        popen = self._make_popen(
+            [
+                "Transferred:    1.234 GiB / 10.000 GiB, 12.3%, 100.0 MiB/s, ETA 0m30s",
+            ]
+        )
         mock_popen.return_value = popen
         zm.ACTIVE_PROCESSES.clear()
 
@@ -515,10 +534,13 @@ class TestRunTransferWithProgress:
     @patch("zfs_migration.progress.update")
     def test_transfer_failure(self, mock_progress, mock_popen):
         """Test transfer failure returns error message."""
-        popen = self._make_popen([
-            "rclone: link_stat failed: No such file",
-            "rclone error: error in data stream",
-        ], rc=1)
+        popen = self._make_popen(
+            [
+                "rclone: link_stat failed: No such file",
+                "rclone error: error in data stream",
+            ],
+            rc=1,
+        )
         mock_popen.return_value = popen
         zm.ACTIVE_PROCESSES.clear()
 
@@ -619,10 +641,12 @@ class FakeFuture:
     Wraps a real concurrent.futures.Future so as_completed() works.
     Inner future is completed immediately with None to avoid blocking.
     """
+
     __slots__ = ("_future",)
 
     def __init__(self):
         from concurrent.futures import Future
+
         self._future = Future()
         self._future.set_result(None)
 
@@ -642,9 +666,7 @@ class TestProcessJob:
         patches = {
             "dataset_exists": patch("zfs_migration.dataset_exists"),
             "create_dataset": patch("zfs_migration.create_dataset"),
-            "rclone_move": patch(
-                "zfs_migration.run_rclone_move"
-            ),
+            "rclone_move": patch("zfs_migration.run_rclone_move"),
             "transfer_progress": patch("zfs_migration.run_transfer_with_progress"),
             "progress_update": patch("zfs_migration.progress.update"),
             "progress_add": patch("zfs_migration.progress.add_task"),
@@ -662,24 +684,26 @@ class TestProcessJob:
 
     def test_new_job_success(self):
         """Test successful new job flow."""
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(True, ""),
-             ), \
-             patch(
-                 "zfs_migration.run_transfer_with_progress",
-                 return_value=(True, ""),
-             ) as mock_transfer, \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("shutil.rmtree"), \
-             patch("zfs_migration.log_step"), \
-             patch("zfs_migration.log_ok") as mock_log_ok, \
-             patch.object(zm, "create_nfs_share"):
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(True, ""),
+            ),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(True, ""),
+            ) as mock_transfer,
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok") as mock_log_ok,
+            patch.object(zm, "create_nfs_share"),
+        ):
             zm.FAILED_JOBS.clear()
             zm.process_job("docs", False, 0, "tank", "media")
 
@@ -689,107 +713,121 @@ class TestProcessJob:
 
     def test_resume_job_success(self):
         """Test successful resume job flow."""
-        with patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(True, ""),
-             ), \
-             patch(
-                 "zfs_migration.run_transfer_with_progress",
-                 return_value=(True, ""),
-             ), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.makedirs"), \
-             patch("shutil.rmtree"), \
-             patch("zfs_migration.log_step"), \
-             patch("zfs_migration.log_ok"), \
-             patch("zfs_migration.log_warn"), \
-             patch.object(zm, "create_nfs_share"):
+        with (
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(True, ""),
+            ),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(True, ""),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.makedirs"),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.log_warn"),
+            patch.object(zm, "create_nfs_share"),
+        ):
             zm.FAILED_JOBS.clear()
             zm.process_job("docs", True, 0, "tank", "media")
 
     def test_dataset_already_exists_skip(self):
         """Test skipping when dataset already exists."""
-        with patch("zfs_migration.dataset_exists", return_value=True), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.log_warn"):
+        with (
+            patch("zfs_migration.dataset_exists", return_value=True),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.log_warn"),
+        ):
             zm.FAILED_JOBS.clear()
             zm.process_job("docs", False, 0, "tank", "media")
 
     def test_copy_phase_failure(self):
         """Test failure during copy phase."""
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(False, "disk full"),
-             ), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.log_error"), \
-             patch("zfs_migration.log_step"):
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(False, "disk full"),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_error"),
+            patch("zfs_migration.log_step"),
+        ):
             zm.FAILED_JOBS.clear()
             zm.process_job("docs", False, 0, "tank", "media")
             assert "docs" in zm.FAILED_JOBS
 
     def test_acl_phase_failure(self):
         """Test failure during ACL sync phase."""
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(True, ""),
-             ), \
-             patch(
-                 "zfs_migration.run_transfer_with_progress",
-                 return_value=(False, "permission denied"),
-             ), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.log_error"), \
-             patch("zfs_migration.log_step"):
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(True, ""),
+            ),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(False, "permission denied"),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_error"),
+            patch("zfs_migration.log_step"),
+        ):
             zm.FAILED_JOBS.clear()
             zm.process_job("docs", False, 0, "tank", "media")
             assert "docs" in zm.FAILED_JOBS
 
     def test_checksum_phase_failure(self):
         """Test failure during checksum verification phase."""
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(True, ""),
-             ), \
-             patch.object(
-                 zm, "run_transfer_with_progress", side_effect=[
-                     (True, ""),       # ACL sync succeeds
-                     (False, "mismatch"),  # checksum verify fails
-                 ]
-             ), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.log_error"), \
-             patch("zfs_migration.log_step"):
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(True, ""),
+            ),
+            patch.object(
+                zm,
+                "run_transfer_with_progress",
+                side_effect=[
+                    (True, ""),  # ACL sync succeeds
+                    (False, "mismatch"),  # checksum verify fails
+                ],
+            ),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.log_error"),
+            patch("zfs_migration.log_step"),
+        ):
             zm.FAILED_JOBS.clear()
             zm.process_job("docs", False, 0, "tank", "media")
             assert "docs" in zm.FAILED_JOBS
 
     def test_dataset_exists_creates_nfs_share(self):
         """Test that an existing dataset without NFS share gets one created."""
-        with patch("zfs_migration.dataset_exists", return_value=True), \
-             patch("zfs_migration.nfs_share_exists", return_value=False), \
-             patch("zfs_migration.create_nfs_share", return_value=True) as mock_nfs, \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.log_warn"), \
-             patch("zfs_migration.log_step"):
+        with (
+            patch("zfs_migration.dataset_exists", return_value=True),
+            patch("zfs_migration.nfs_share_exists", return_value=False),
+            patch("zfs_migration.create_nfs_share", return_value=True) as mock_nfs,
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.log_warn"),
+            patch("zfs_migration.log_step"),
+        ):
             zm.process_job("docs", False, 0, "tank", "media")
             mock_nfs.assert_called_once()
             call_kwargs = mock_nfs.call_args
@@ -797,28 +835,32 @@ class TestProcessJob:
 
     def test_dataset_exists_nfs_share_already_present(self):
         """Test that an existing dataset with NFS share skips creation."""
-        with patch("zfs_migration.dataset_exists", return_value=True), \
-             patch("zfs_migration.nfs_share_exists", return_value=True), \
-             patch("zfs_migration.create_nfs_share") as mock_nfs, \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.log_warn"):
+        with (
+            patch("zfs_migration.dataset_exists", return_value=True),
+            patch("zfs_migration.nfs_share_exists", return_value=True),
+            patch("zfs_migration.create_nfs_share") as mock_nfs,
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.log_warn"),
+        ):
             zm.process_job("docs", False, 0, "tank", "media")
             mock_nfs.assert_not_called()
 
     def test_shutting_down_skips_failure_log(self):
         """Test that shutting down doesn't log failures."""
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(False, "interrupted"),
-             ), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.log_error") as mock_error, \
-             patch("zfs_migration.log_step"):
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(False, "interrupted"),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_error") as mock_error,
+            patch("zfs_migration.log_step"),
+        ):
             zm.FAILED_JOBS.clear()
             zm.SHUTTING_DOWN = True
             try:
@@ -865,21 +907,21 @@ class TestMain:
     def test_no_jobs_exits_early(self):
         """Test that main() exits gracefully when no jobs are found."""
         patches = self._setup_arg_patches()
-        with patch.object(zm, "console"), \
-             patches["get_zfs_context"], \
-             patches["os_chdir"], \
-             patches["os_listdir"] as mock_listdir, \
-             patches["os_path_isdir"], \
-             patches["is_valid_zfs_name"], \
-             patch.object(zm, "progress"), \
-             patch("zfs_migration.log_info"), \
-             patch("zfs_migration.log_ok") as mock_log_ok, \
-             patch.object(sys, "exit"):
+        with (
+            patch.object(zm, "console"),
+            patches["get_zfs_context"],
+            patches["os_chdir"],
+            patches["os_listdir"] as mock_listdir,
+            patches["os_path_isdir"],
+            patches["is_valid_zfs_name"],
+            patch.object(zm, "progress"),
+            patch("zfs_migration.log_info"),
+            patch("zfs_migration.log_ok") as mock_log_ok,
+            patch.object(sys, "exit"),
+        ):
             mock_listdir.return_value = []
 
-            with patch(
-                "zfs_migration.argparse.ArgumentParser"
-            ) as mock_parser_cls:
+            with patch("zfs_migration.argparse.ArgumentParser") as mock_parser_cls:
                 mock_args = MagicMock()
                 mock_args.path = "/mnt/tank/media"
                 mock_args.yes = False
@@ -899,21 +941,21 @@ class TestMain:
     def test_skips_dot_folders(self):
         """Test that dot-folders are skipped during discovery."""
         patches = self._setup_arg_patches()
-        with patch.object(zm, "console"), \
-             patches["get_zfs_context"], \
-             patches["os_chdir"], \
-             patches["os_listdir"] as mock_listdir, \
-             patch("zfs_migration.os.path.isdir", return_value=True), \
-             patches["is_valid_zfs_name"], \
-             patch.object(zm, "should_skip_folder") as mock_skip, \
-             patch.object(zm, "progress"), \
-             patch("zfs_migration.log_info"):
+        with (
+            patch.object(zm, "console"),
+            patches["get_zfs_context"],
+            patches["os_chdir"],
+            patches["os_listdir"] as mock_listdir,
+            patch("zfs_migration.os.path.isdir", return_value=True),
+            patches["is_valid_zfs_name"],
+            patch.object(zm, "should_skip_folder") as mock_skip,
+            patch.object(zm, "progress"),
+            patch("zfs_migration.log_info"),
+        ):
             mock_listdir.return_value = [".hidden", "docs", ".git"]
             mock_skip.return_value = True  # all skipped
 
-            with patch(
-                "zfs_migration.argparse.ArgumentParser"
-            ) as mock_parser_cls:
+            with patch("zfs_migration.argparse.ArgumentParser") as mock_parser_cls:
                 mock_args = MagicMock()
                 mock_args.path = "/mnt/tank/media"
                 mock_args.yes = False
@@ -932,9 +974,7 @@ class TestMain:
 
     def test_invalid_path_exits(self):
         """Test that an invalid target path causes exit."""
-        with patch(
-            "zfs_migration.argparse.ArgumentParser"
-        ) as mock_parser_cls:
+        with patch("zfs_migration.argparse.ArgumentParser") as mock_parser_cls:
             mock_args = MagicMock()
             mock_args.path = "/nonexistent"
             mock_args.yes = False
@@ -946,9 +986,11 @@ class TestMain:
 
             mock_path = MagicMock()
             mock_path.is_dir.return_value = False
-            with patch("zfs_migration.Path", return_value=mock_path), \
-                 patch("zfs_migration.log_error"), \
-                 patch.object(sys, "exit") as mock_exit:
+            with (
+                patch("zfs_migration.Path", return_value=mock_path),
+                patch("zfs_migration.log_error"),
+                patch.object(sys, "exit") as mock_exit,
+            ):
                 mock_exit.side_effect = lambda code: (_ for _ in ()).throw(
                     SystemExit(code)
                 )
@@ -960,20 +1002,20 @@ class TestMain:
     def test_failed_jobs_exit_1(self):
         """Test that main() exits with code 1 when jobs fail."""
         patches = self._setup_arg_patches()
-        with patch.object(zm, "console"), \
-             patches["get_zfs_context"], \
-             patches["os_chdir"], \
-             patches["os_listdir"] as mock_listdir, \
-             patches["os_path_isdir"], \
-             patches["is_valid_zfs_name"], \
-             patch.object(zm, "progress"), \
-             patch("zfs_migration.log_info"), \
-             patch.object(sys, "exit") as mock_exit:
+        with (
+            patch.object(zm, "console"),
+            patches["get_zfs_context"],
+            patches["os_chdir"],
+            patches["os_listdir"] as mock_listdir,
+            patches["os_path_isdir"],
+            patches["is_valid_zfs_name"],
+            patch.object(zm, "progress"),
+            patch("zfs_migration.log_info"),
+            patch.object(sys, "exit") as mock_exit,
+        ):
             mock_listdir.return_value = ["docs"]
 
-            with patch(
-                "zfs_migration.argparse.ArgumentParser"
-            ) as mock_parser_cls:
+            with patch("zfs_migration.argparse.ArgumentParser") as mock_parser_cls:
                 mock_args = MagicMock()
                 mock_args.path = "/mnt/tank/media"
                 mock_args.yes = False
@@ -985,10 +1027,10 @@ class TestMain:
 
                 mock_path = MagicMock()
                 mock_path.is_dir.return_value = True
-                with patch("zfs_migration.Path", return_value=mock_path), \
-                     patch(
-                         "zfs_migration.ThreadPoolExecutor"
-                     ) as mock_executor:
+                with (
+                    patch("zfs_migration.Path", return_value=mock_path),
+                    patch("zfs_migration.ThreadPoolExecutor") as mock_executor,
+                ):
                     zm.FAILED_JOBS = ["docs"]
                     zm.SHUTTING_DOWN = False
 
@@ -996,10 +1038,13 @@ class TestMain:
                         class Ctx:
                             def __enter__(self_inner):
                                 return Ctx()
+
                             def __exit__(self_inner, *e):
                                 pass
+
                             def submit(self_inner, *a, **kw):
                                 return FakeFuture()
+
                         return Ctx()
 
                     mock_executor.side_effect = executor_ctx
@@ -1010,21 +1055,21 @@ class TestMain:
     def test_success_no_exit(self):
         """Test successful run doesn't call sys.exit."""
         patches = self._setup_arg_patches()
-        with patch.object(zm, "console"), \
-             patches["get_zfs_context"], \
-             patches["os_chdir"], \
-             patches["os_listdir"] as mock_listdir, \
-             patches["os_path_isdir"], \
-             patches["is_valid_zfs_name"], \
-             patch.object(zm, "progress"), \
-             patch("zfs_migration.log_info"), \
-             patch("zfs_migration.log_ok"), \
-             patch.object(sys, "exit") as mock_exit:
+        with (
+            patch.object(zm, "console"),
+            patches["get_zfs_context"],
+            patches["os_chdir"],
+            patches["os_listdir"] as mock_listdir,
+            patches["os_path_isdir"],
+            patches["is_valid_zfs_name"],
+            patch.object(zm, "progress"),
+            patch("zfs_migration.log_info"),
+            patch("zfs_migration.log_ok"),
+            patch.object(sys, "exit") as mock_exit,
+        ):
             mock_listdir.return_value = ["docs"]
 
-            with patch(
-                "zfs_migration.argparse.ArgumentParser"
-            ) as mock_parser_cls:
+            with patch("zfs_migration.argparse.ArgumentParser") as mock_parser_cls:
                 mock_args = MagicMock()
                 mock_args.path = "/mnt/tank/media"
                 mock_args.yes = False
@@ -1036,10 +1081,10 @@ class TestMain:
 
                 mock_path = MagicMock()
                 mock_path.is_dir.return_value = True
-                with patch("zfs_migration.Path", return_value=mock_path), \
-                     patch(
-                         "zfs_migration.ThreadPoolExecutor"
-                     ) as mock_executor:
+                with (
+                    patch("zfs_migration.Path", return_value=mock_path),
+                    patch("zfs_migration.ThreadPoolExecutor") as mock_executor,
+                ):
                     zm.FAILED_JOBS.clear()
                     zm.SHUTTING_DOWN = False
 
@@ -1047,10 +1092,13 @@ class TestMain:
                         class Ctx:
                             def __enter__(self_inner):
                                 return Ctx()
+
                             def __exit__(self_inner, *e):
                                 pass
+
                             def submit(self_inner, *a, **kw):
                                 return FakeFuture()
+
                         return Ctx()
 
                     mock_executor.side_effect = executor_ctx
@@ -1121,57 +1169,57 @@ class TestEdgeCases:
     def test_active_processes_cleaned_up(self):
         """Test that completed processes are removed from ACTIVE_PROCESSES."""
         fake = FakePopen([""])
-        with patch("zfs_migration.subprocess.Popen") as mock_popen, \
-             patch("zfs_migration.progress.update"):
+        with (
+            patch("zfs_migration.subprocess.Popen") as mock_popen,
+            patch("zfs_migration.progress.update"),
+        ):
             mock_popen.return_value = fake
             zm.ACTIVE_PROCESSES.clear()
 
             zm.run_transfer_with_progress(
-                ["rclone", "move", "-P", "src/", "dst/"],
-                0, "job", "Copy", "blue"
+                ["rclone", "move", "-P", "src/", "dst/"], 0, "job", "Copy", "blue"
             )
             assert fake not in zm.ACTIVE_PROCESSES
 
     def test_process_job_resume_creates_dataset(self):
         """Test that resume jobs create missing datasets."""
-        with patch("zfs_migration.create_dataset") as mock_create, \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(True, ""),
-             ), \
-             patch(
-                 "zfs_migration.run_transfer_with_progress",
-                 return_value=(True, ""),
-             ), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.makedirs"), \
-             patch("shutil.rmtree"), \
-             patch("zfs_migration.log_step"), \
-             patch("zfs_migration.log_ok"), \
-             patch("zfs_migration.log_warn"), \
-             patch.object(zm, "create_nfs_share"):
+        with (
+            patch("zfs_migration.create_dataset") as mock_create,
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(True, ""),
+            ),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(True, ""),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.makedirs"),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.log_warn"),
+            patch.object(zm, "create_nfs_share"),
+        ):
             zm.FAILED_JOBS.clear()
             zm.process_job("docs", True, 0, "tank", "media")
             mock_create.assert_called_once_with("tank/media/docs")
 
     def test_tmp_tmp_skipped(self):
         """Test that -tmp-tmp directories are skipped."""
-        with patch.object(zm, "console"), \
-             patch.object(
-                 zm, "get_zfs_context", return_value=("tank", "media")
-             ), \
-             patch("zfs_migration.os.chdir"), \
-             patch("zfs_migration.os.listdir", return_value=["data-tmp-tmp"]), \
-             patch("zfs_migration.os.path.isdir", return_value=True), \
-             patch.object(zm, "progress"), \
-             patch("zfs_migration.log_info"), \
-             patch("zfs_migration.log_warn") as mock_warn:
-
-            with patch(
-                "zfs_migration.argparse.ArgumentParser"
-            ) as mock_parser_cls:
+        with (
+            patch.object(zm, "console"),
+            patch.object(zm, "get_zfs_context", return_value=("tank", "media")),
+            patch("zfs_migration.os.chdir"),
+            patch("zfs_migration.os.listdir", return_value=["data-tmp-tmp"]),
+            patch("zfs_migration.os.path.isdir", return_value=True),
+            patch.object(zm, "progress"),
+            patch("zfs_migration.log_info"),
+            patch("zfs_migration.log_warn") as mock_warn,
+        ):
+            with patch("zfs_migration.argparse.ArgumentParser") as mock_parser_cls:
                 mock_args = MagicMock()
                 mock_args.path = "/mnt/tank/media"
                 mock_args.yes = False
@@ -1200,17 +1248,21 @@ class TestSignalHandling:
     def test_sigint_handler_calls_kill_children(self):
         """Test that SIGINT handler calls kill_all_children."""
         zm.SHUTTING_DOWN = False
-        with patch("zfs_migration.kill_all_children") as mock_kill, \
-             patch("zfs_migration.log_error"), \
-             patch.object(sys, "exit"):
+        with (
+            patch("zfs_migration.kill_all_children") as mock_kill,
+            patch("zfs_migration.log_error"),
+            patch.object(sys, "exit"),
+        ):
             zm.sigint_handler(2, None)
             mock_kill.assert_called_once()
 
     def test_sigterm_handler_same_as_sigint(self):
         """Test that SIGTERM handler behaves like SIGINT."""
-        with patch("zfs_migration.kill_all_children") as mock_kill, \
-             patch("zfs_migration.log_error"), \
-             patch.object(sys, "exit") as mock_exit:
+        with (
+            patch("zfs_migration.kill_all_children") as mock_kill,
+            patch("zfs_migration.log_error"),
+            patch.object(sys, "exit") as mock_exit,
+        ):
             zm.sigint_handler(15, None)
             mock_kill.assert_called_once()
             mock_exit.assert_called_once_with(130)
@@ -1282,8 +1334,10 @@ class TestCoverageGaps:
         lines = [f"file{i}" for i in range(2000)]
         popen = FakePopen(lines)
 
-        with patch("zfs_migration.subprocess.Popen") as mock_popen, \
-             patch("zfs_migration.progress.update") as mock_progress:
+        with (
+            patch("zfs_migration.subprocess.Popen") as mock_popen,
+            patch("zfs_migration.progress.update") as mock_progress,
+        ):
             mock_popen.return_value = popen
             zm.ACTIVE_PROCESSES.clear()
 
@@ -1298,8 +1352,10 @@ class TestCoverageGaps:
         zm.LOG_FILE = log_file
         popen = FakePopen([""])
 
-        with patch("zfs_migration.subprocess.Popen") as mock_popen, \
-             patch("zfs_migration.progress.update"):
+        with (
+            patch("zfs_migration.subprocess.Popen") as mock_popen,
+            patch("zfs_migration.progress.update"),
+        ):
             mock_popen.return_value = popen
             # Don't add to ACTIVE_PROCESSES — process won't be found for removal
             zm.run_transfer_with_progress(
@@ -1311,16 +1367,18 @@ class TestCoverageGaps:
         zm.SHUTTING_DOWN = True
         zm.FAILED_JOBS.clear()
 
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(False, "disk full"),
-             ), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.log_error") as mock_log_error:
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(False, "disk full"),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.log_error") as mock_log_error,
+        ):
             zm.process_job("docs", False, 0, "tank", "media")
             # Should NOT log error when shutting down
             mock_log_error.assert_not_called()
@@ -1331,21 +1389,23 @@ class TestCoverageGaps:
         zm.SHUTTING_DOWN = True
         zm.FAILED_JOBS.clear()
 
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(True, ""),
-             ), \
-             patch(
-                 "zfs_migration.run_transfer_with_progress",
-                 return_value=(False, "acl error"),
-             ) as mock_transfer, \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.log_error") as mock_log_error:
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(True, ""),
+            ),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(False, "acl error"),
+            ) as mock_transfer,
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_error") as mock_log_error,
+        ):
             mock_transfer.side_effect = [
                 (True, ""),  # ACL sync succeeds (not used since we return False)
                 (False, "acl error"),  # ACL fails
@@ -1358,26 +1418,28 @@ class TestCoverageGaps:
         zm.SHUTTING_DOWN = False
         zm.FAILED_JOBS.clear()
 
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(True, ""),
-             ), \
-             patch(
-                 "zfs_migration.run_transfer_with_progress",
-                 return_value=(True, ""),
-             ), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.os.makedirs"), \
-             patch("zfs_migration.os.path.exists", return_value=True), \
-             patch("shutil.rmtree") as mock_rmtree, \
-             patch("zfs_migration.log_step"), \
-             patch("zfs_migration.log_ok"), \
-             patch.object(zm, "create_nfs_share"):
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(True, ""),
+            ),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(True, ""),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.os.makedirs"),
+            patch("zfs_migration.os.path.exists", return_value=True),
+            patch("shutil.rmtree") as mock_rmtree,
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch.object(zm, "create_nfs_share"),
+        ):
             zm.process_job("docs", False, 0, "tank", "media")
             mock_rmtree.assert_called_once()
 
@@ -1389,47 +1451,46 @@ class TestCoverageGaps:
         zm.SHUTTING_DOWN = False
         zm.FAILED_JOBS.clear()
 
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(True, ""),
-             ), \
-             patch(
-                 "zfs_migration.run_transfer_with_progress",
-                 return_value=(True, ""),
-             ), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.os.path.exists", return_value=False), \
-             patch("shutil.rmtree"), \
-             patch("zfs_migration.log_step"), \
-             patch("zfs_migration.log_ok"), \
-             patch("zfs_migration.nfs_share_exists", return_value=True), \
-             patch.object(zm, "create_nfs_share") as mock_nfs:
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(True, ""),
+            ),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(True, ""),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.nfs_share_exists", return_value=True),
+            patch.object(zm, "create_nfs_share") as mock_nfs,
+        ):
             zm.process_job("docs", False, 0, "tank", "media")
             # NFS share already exists — create_nfs_share must NOT be called
             mock_nfs.assert_not_called()
 
     def test_invalid_tmp_zfs_name(self):
         """Test tmp directory with invalid ZFS name is skipped."""
-        with patch.object(zm, "console"), \
-             patch.object(
-                 zm, "get_zfs_context", return_value=("tank", "media")
-             ), \
-             patch("zfs_migration.os.chdir"), \
-             patch("zfs_migration.os.listdir", return_value=["bad!name-tmp"]), \
-             patch("zfs_migration.os.path.isdir", return_value=True), \
-             patch.object(zm, "progress"), \
-             patch("zfs_migration.log_info"), \
-             patch("zfs_migration.log_warn") as mock_warn, \
-             patch("zfs_migration.log_ok"):
-
-            with patch(
-                "zfs_migration.argparse.ArgumentParser"
-            ) as mock_parser_cls:
+        with (
+            patch.object(zm, "console"),
+            patch.object(zm, "get_zfs_context", return_value=("tank", "media")),
+            patch("zfs_migration.os.chdir"),
+            patch("zfs_migration.os.listdir", return_value=["bad!name-tmp"]),
+            patch("zfs_migration.os.path.isdir", return_value=True),
+            patch.object(zm, "progress"),
+            patch("zfs_migration.log_info"),
+            patch("zfs_migration.log_warn") as mock_warn,
+            patch("zfs_migration.log_ok"),
+        ):
+            with patch("zfs_migration.argparse.ArgumentParser") as mock_parser_cls:
                 mock_args = MagicMock()
                 mock_args.path = "/mnt/tank/media"
                 mock_args.yes = False
@@ -1448,21 +1509,18 @@ class TestCoverageGaps:
 
     def test_invalid_normal_zfs_name(self):
         """Test normal directory with invalid ZFS name is skipped."""
-        with patch.object(zm, "console"), \
-             patch.object(
-                 zm, "get_zfs_context", return_value=("tank", "media")
-             ), \
-             patch("zfs_migration.os.chdir"), \
-             patch("zfs_migration.os.listdir", return_value=["bad!name"]), \
-             patch("zfs_migration.os.path.isdir", return_value=True), \
-             patch.object(zm, "progress"), \
-             patch("zfs_migration.log_info"), \
-             patch("zfs_migration.log_warn") as mock_warn, \
-             patch("zfs_migration.log_ok"):
-
-            with patch(
-                "zfs_migration.argparse.ArgumentParser"
-            ) as mock_parser_cls:
+        with (
+            patch.object(zm, "console"),
+            patch.object(zm, "get_zfs_context", return_value=("tank", "media")),
+            patch("zfs_migration.os.chdir"),
+            patch("zfs_migration.os.listdir", return_value=["bad!name"]),
+            patch("zfs_migration.os.path.isdir", return_value=True),
+            patch.object(zm, "progress"),
+            patch("zfs_migration.log_info"),
+            patch("zfs_migration.log_warn") as mock_warn,
+            patch("zfs_migration.log_ok"),
+        ):
+            with patch("zfs_migration.argparse.ArgumentParser") as mock_parser_cls:
                 mock_args = MagicMock()
                 mock_args.path = "/mnt/tank/media"
                 mock_args.yes = False
@@ -1483,20 +1541,17 @@ class TestCoverageGaps:
         """Test exception in future.result() is caught."""
         from concurrent.futures import Future as RealFuture
 
-        with patch.object(zm, "console"), \
-             patch.object(
-                 zm, "get_zfs_context", return_value=("tank", "media")
-             ), \
-             patch("zfs_migration.os.chdir"), \
-             patch("zfs_migration.os.listdir", return_value=["docs"]), \
-             patch("zfs_migration.os.path.isdir", return_value=True), \
-             patch.object(zm, "is_valid_zfs_name", return_value=True), \
-             patch.object(zm, "progress"), \
-             patch("zfs_migration.log_info"):
-
-            with patch(
-                "zfs_migration.argparse.ArgumentParser"
-            ) as mock_parser_cls:
+        with (
+            patch.object(zm, "console"),
+            patch.object(zm, "get_zfs_context", return_value=("tank", "media")),
+            patch("zfs_migration.os.chdir"),
+            patch("zfs_migration.os.listdir", return_value=["docs"]),
+            patch("zfs_migration.os.path.isdir", return_value=True),
+            patch.object(zm, "is_valid_zfs_name", return_value=True),
+            patch.object(zm, "progress"),
+            patch("zfs_migration.log_info"),
+        ):
+            with patch("zfs_migration.argparse.ArgumentParser") as mock_parser_cls:
                 mock_args = MagicMock()
                 mock_args.path = "/mnt/tank/media"
                 mock_args.yes = False
@@ -1516,37 +1571,38 @@ class TestCoverageGaps:
                 class Ctx:
                     def __enter__(self_inner):
                         return self_inner
+
                     def __exit__(self_inner, *e):
                         pass
+
                     def submit(self_inner, *a, **kw):
                         return error_future
 
                 zm.FAILED_JOBS.clear()
                 zm.SHUTTING_DOWN = False
 
-                with patch("zfs_migration.Path", return_value=mock_path), \
-                     patch("zfs_migration.ThreadPoolExecutor") as mock_exec, \
-                     patch("zfs_migration.log_error") as mock_err:
+                with (
+                    patch("zfs_migration.Path", return_value=mock_path),
+                    patch("zfs_migration.ThreadPoolExecutor") as mock_exec,
+                    patch("zfs_migration.log_error") as mock_err,
+                ):
                     mock_exec.return_value = Ctx()
                     zm.main()
                     mock_err.assert_called()
 
     def test_shutting_down_final_status(self):
         """Test shutdown skips 'All complete successfully'."""
-        with patch.object(zm, "console"), \
-             patch.object(
-                 zm, "get_zfs_context", return_value=("tank", "media")
-             ), \
-             patch("zfs_migration.os.chdir"), \
-             patch("zfs_migration.os.listdir", return_value=["docs"]), \
-             patch("zfs_migration.os.path.isdir", return_value=True), \
-             patch.object(zm, "is_valid_zfs_name", return_value=True), \
-             patch.object(zm, "progress"), \
-             patch("zfs_migration.log_info"):
-
-            with patch(
-                "zfs_migration.argparse.ArgumentParser"
-            ) as mock_parser_cls:
+        with (
+            patch.object(zm, "console"),
+            patch.object(zm, "get_zfs_context", return_value=("tank", "media")),
+            patch("zfs_migration.os.chdir"),
+            patch("zfs_migration.os.listdir", return_value=["docs"]),
+            patch("zfs_migration.os.path.isdir", return_value=True),
+            patch.object(zm, "is_valid_zfs_name", return_value=True),
+            patch.object(zm, "progress"),
+            patch("zfs_migration.log_info"),
+        ):
+            with patch("zfs_migration.argparse.ArgumentParser") as mock_parser_cls:
                 mock_args = MagicMock()
                 mock_args.path = "/mnt/tank/media"
                 mock_args.yes = False
@@ -1564,17 +1620,21 @@ class TestCoverageGaps:
                 class Ctx:
                     def __enter__(self_inner):
                         return self_inner
+
                     def __exit__(self_inner, *e):
                         pass
+
                     def submit(self_inner, *a, **kw):
                         return ok_future
 
                 mock_path = MagicMock()
                 mock_path.is_dir.return_value = True
 
-                with patch("zfs_migration.Path", return_value=mock_path), \
-                     patch("zfs_migration.ThreadPoolExecutor") as mock_exec, \
-                     patch("zfs_migration.log_ok") as mock_ok:
+                with (
+                    patch("zfs_migration.Path", return_value=mock_path),
+                    patch("zfs_migration.ThreadPoolExecutor") as mock_exec,
+                    patch("zfs_migration.log_ok") as mock_ok,
+                ):
                     mock_exec.return_value = Ctx()
                     zm.main()
                     # Should NOT log "All complete successfully" when shutting down
@@ -1583,20 +1643,17 @@ class TestCoverageGaps:
 
     def test_shutting_down_before_executor(self):
         """Test SHUTTING_DOWN=True before executor skips pool entirely."""
-        with patch.object(zm, "console"), \
-             patch.object(
-                 zm, "get_zfs_context", return_value=("tank", "media")
-             ), \
-             patch("zfs_migration.os.chdir"), \
-             patch("zfs_migration.os.listdir", return_value=["docs"]), \
-             patch("zfs_migration.os.path.isdir", return_value=True), \
-             patch.object(zm, "is_valid_zfs_name", return_value=True), \
-             patch.object(zm, "progress"), \
-             patch("zfs_migration.log_info"):
-
-            with patch(
-                "zfs_migration.argparse.ArgumentParser"
-            ) as mock_parser_cls:
+        with (
+            patch.object(zm, "console"),
+            patch.object(zm, "get_zfs_context", return_value=("tank", "media")),
+            patch("zfs_migration.os.chdir"),
+            patch("zfs_migration.os.listdir", return_value=["docs"]),
+            patch("zfs_migration.os.path.isdir", return_value=True),
+            patch.object(zm, "is_valid_zfs_name", return_value=True),
+            patch.object(zm, "progress"),
+            patch("zfs_migration.log_info"),
+        ):
+            with patch("zfs_migration.argparse.ArgumentParser") as mock_parser_cls:
                 mock_args = MagicMock()
                 mock_args.path = "/mnt/tank/media"
                 mock_args.yes = False
@@ -1612,28 +1669,27 @@ class TestCoverageGaps:
                 mock_path = MagicMock()
                 mock_path.is_dir.return_value = True
 
-                with patch("zfs_migration.Path", return_value=mock_path), \
-                     patch("zfs_migration.ThreadPoolExecutor") as mock_exec:
+                with (
+                    patch("zfs_migration.Path", return_value=mock_path),
+                    patch("zfs_migration.ThreadPoolExecutor") as mock_exec,
+                ):
                     zm.main()
                     # ThreadPoolExecutor should NOT be entered when shutting down
                     assert mock_exec.call_count == 0
 
     def test_temporary_jobs_executor_submit(self):
         """Test temporary jobs are submitted to executor."""
-        with patch.object(zm, "console"), \
-             patch.object(
-                 zm, "get_zfs_context", return_value=("tank", "media")
-             ), \
-             patch("zfs_migration.os.chdir"), \
-             patch("zfs_migration.os.listdir", return_value=["docs-tmp"]), \
-             patch("zfs_migration.os.path.isdir", return_value=True), \
-             patch.object(zm, "is_valid_zfs_name", return_value=True), \
-             patch.object(zm, "progress"), \
-             patch("zfs_migration.log_info"):
-
-            with patch(
-                "zfs_migration.argparse.ArgumentParser"
-            ) as mock_parser_cls:
+        with (
+            patch.object(zm, "console"),
+            patch.object(zm, "get_zfs_context", return_value=("tank", "media")),
+            patch("zfs_migration.os.chdir"),
+            patch("zfs_migration.os.listdir", return_value=["docs-tmp"]),
+            patch("zfs_migration.os.path.isdir", return_value=True),
+            patch.object(zm, "is_valid_zfs_name", return_value=True),
+            patch.object(zm, "progress"),
+            patch("zfs_migration.log_info"),
+        ):
+            with patch("zfs_migration.argparse.ArgumentParser") as mock_parser_cls:
                 mock_args = MagicMock()
                 mock_args.path = "/mnt/tank/media"
                 mock_args.yes = False
@@ -1651,8 +1707,10 @@ class TestCoverageGaps:
                 class Ctx:
                     def __enter__(self_inner):
                         return self_inner
+
                     def __exit__(self_inner, *e):
                         pass
+
                     def submit(self_inner, func, *a, **kw):
                         submitted_jobs.append(a)  # capture process_job args
                         return FakeFuture()
@@ -1660,8 +1718,10 @@ class TestCoverageGaps:
                 mock_path = MagicMock()
                 mock_path.is_dir.return_value = True
 
-                with patch("zfs_migration.Path", return_value=mock_path), \
-                     patch("zfs_migration.ThreadPoolExecutor") as mock_exec:
+                with (
+                    patch("zfs_migration.Path", return_value=mock_path),
+                    patch("zfs_migration.ThreadPoolExecutor") as mock_exec,
+                ):
                     mock_exec.return_value = Ctx()
                     zm.main()
                     # docs-tmp -> job name "docs" submitted as resume=True
@@ -1674,29 +1734,31 @@ class TestCoverageGaps:
         zm.SHUTTING_DOWN = False
         zm.FAILED_JOBS.clear()
 
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(True, ""),
-             ), \
-             patch(
-                 "zfs_migration.run_transfer_with_progress",
-                 side_effect=[
-                     (True, ""),  # ACL sync succeeds
-                     (False, "checksum mismatch"),  # checksum verify fails
-                 ],
-             ), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.os.makedirs"), \
-             patch("zfs_migration.os.path.exists", return_value=False), \
-             patch("shutil.rmtree"), \
-             patch("zfs_migration.log_step"), \
-             patch("zfs_migration.log_error") as mock_err, \
-             patch.object(zm, "create_nfs_share"):
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(True, ""),
+            ),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                side_effect=[
+                    (True, ""),  # ACL sync succeeds
+                    (False, "checksum mismatch"),  # checksum verify fails
+                ],
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.os.makedirs"),
+            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_error") as mock_err,
+            patch.object(zm, "create_nfs_share"),
+        ):
             zm.process_job("docs", False, 0, "tank", "media")
             assert "docs" in zm.FAILED_JOBS
             calls = [str(c) for c in mock_err.call_args_list]
@@ -1707,27 +1769,29 @@ class TestCoverageGaps:
         zm.SHUTTING_DOWN = False
         zm.FAILED_JOBS.clear()
 
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(True, ""),
-             ), \
-             patch(
-                 "zfs_migration.run_transfer_with_progress",
-                 return_value=(True, ""),
-             ), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.os.makedirs"), \
-             patch("zfs_migration.os.path.exists", return_value=False), \
-             patch("shutil.rmtree"), \
-             patch("zfs_migration.log_step"), \
-             patch("zfs_migration.log_ok"), \
-             patch("zfs_migration.log_warn") as mock_warn, \
-             patch.object(zm, "create_nfs_share", return_value=False):
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(True, ""),
+            ),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(True, ""),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.os.makedirs"),
+            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.log_warn") as mock_warn,
+            patch.object(zm, "create_nfs_share", return_value=False),
+        ):
             zm.process_job("docs", False, 0, "tank", "media")
             # NFS failure should log warning but NOT fail the job
             assert "docs" not in zm.FAILED_JOBS
@@ -1739,18 +1803,20 @@ class TestCoverageGaps:
         zm.SHUTTING_DOWN = False
         zm.FAILED_JOBS.clear()
 
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(False, "disk full"),
-             ), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.log_error") as mock_err, \
-             patch("zfs_migration.log_step"):
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(False, "disk full"),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_error") as mock_err,
+            patch("zfs_migration.log_step"),
+        ):
             zm.process_job("docs", False, 0, "tank", "media")
             assert "docs" in zm.FAILED_JOBS
             calls = [str(c) for c in mock_err.call_args_list]
@@ -1763,22 +1829,24 @@ class TestCoverageGaps:
 
         # rclone_move is mocked, so run_transfer_with_progress is only called
         # once — for the ACL phase. Make it fail.
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(True, ""),
-             ), \
-             patch(
-                 "zfs_migration.run_transfer_with_progress",
-                 return_value=(False, "acl error"),
-             ), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.log_error") as mock_err, \
-             patch("zfs_migration.log_step"):
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(True, ""),
+            ),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(False, "acl error"),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_error") as mock_err,
+            patch("zfs_migration.log_step"),
+        ):
             zm.process_job("docs", False, 0, "tank", "media")
             assert "docs" in zm.FAILED_JOBS
             calls = [str(c) for c in mock_err.call_args_list]
@@ -1787,20 +1855,17 @@ class TestCoverageGaps:
 
     def test_successful_all_complete(self):
         """Test 'All complete successfully' message when not shutting down."""
-        with patch.object(zm, "console"), \
-             patch.object(
-                 zm, "get_zfs_context", return_value=("tank", "media")
-             ), \
-             patch("zfs_migration.os.chdir"), \
-             patch("zfs_migration.os.listdir", return_value=["docs"]), \
-             patch("zfs_migration.os.path.isdir", return_value=True), \
-             patch.object(zm, "is_valid_zfs_name", return_value=True), \
-             patch.object(zm, "progress"), \
-             patch("zfs_migration.log_info"):
-
-            with patch(
-                "zfs_migration.argparse.ArgumentParser"
-            ) as mock_parser_cls:
+        with (
+            patch.object(zm, "console"),
+            patch.object(zm, "get_zfs_context", return_value=("tank", "media")),
+            patch("zfs_migration.os.chdir"),
+            patch("zfs_migration.os.listdir", return_value=["docs"]),
+            patch("zfs_migration.os.path.isdir", return_value=True),
+            patch.object(zm, "is_valid_zfs_name", return_value=True),
+            patch.object(zm, "progress"),
+            patch("zfs_migration.log_info"),
+        ):
+            with patch("zfs_migration.argparse.ArgumentParser") as mock_parser_cls:
                 mock_args = MagicMock()
                 mock_args.path = "/mnt/tank/media"
                 mock_args.yes = False
@@ -1816,17 +1881,21 @@ class TestCoverageGaps:
                 class Ctx:
                     def __enter__(self_inner):
                         return self_inner
+
                     def __exit__(self_inner, *e):
                         pass
+
                     def submit(self_inner, *a, **kw):
                         return FakeFuture()
 
                 mock_path = MagicMock()
                 mock_path.is_dir.return_value = True
 
-                with patch("zfs_migration.Path", return_value=mock_path), \
-                     patch("zfs_migration.ThreadPoolExecutor") as mock_exec, \
-                     patch("zfs_migration.log_ok") as mock_ok:
+                with (
+                    patch("zfs_migration.Path", return_value=mock_path),
+                    patch("zfs_migration.ThreadPoolExecutor") as mock_exec,
+                    patch("zfs_migration.log_ok") as mock_ok,
+                ):
                     mock_exec.return_value = Ctx()
                     zm.main()
                     calls = [str(c) for c in mock_ok.call_args_list]
@@ -1837,26 +1906,28 @@ class TestCoverageGaps:
         zm.SHUTTING_DOWN = False
         zm.FAILED_JOBS.clear()
 
-        with patch("zfs_migration.dataset_exists", return_value=False), \
-             patch("zfs_migration.create_dataset"), \
-             patch(
-                 "zfs_migration.run_rclone_move",
-                 return_value=(True, ""),
-             ), \
-             patch(
-                 "zfs_migration.run_transfer_with_progress",
-                 return_value=(True, ""),
-             ), \
-             patch("zfs_migration.progress.update"), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.os.makedirs"), \
-             patch("zfs_migration.os.path.exists", return_value=False), \
-             patch("shutil.rmtree"), \
-             patch("zfs_migration.log_step"), \
-             patch("zfs_migration.log_ok") as mock_log_ok, \
-             patch.object(zm, "create_nfs_share", return_value=True) as mock_nfs:
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(True, ""),
+            ),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(True, ""),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.os.makedirs"),
+            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok") as mock_log_ok,
+            patch.object(zm, "create_nfs_share", return_value=True) as mock_nfs,
+        ):
             zm.process_job("docs", False, 0, "tank", "media")
             mock_nfs.assert_called_once()
             assert "docs" not in zm.FAILED_JOBS
@@ -1872,8 +1943,10 @@ class TestCoverageGaps:
         popen = FakePopen([""])
         zm.ACTIVE_PROCESSES.clear()
 
-        with patch("zfs_migration.subprocess.Popen", return_value=popen), \
-             patch("zfs_migration.progress.update"):
+        with (
+            patch("zfs_migration.subprocess.Popen", return_value=popen),
+            patch("zfs_migration.progress.update"),
+        ):
             # Replace remove so the process is never actually removed —
             # meaning 'if p in ACTIVE_PROCESSES' is True, and we hit the
             # *opposite* branch. To hit (not found), clear the list
@@ -1886,9 +1959,11 @@ class TestCoverageGaps:
             # The function flow is: append -> read loop -> p.wait() -> check.
             # Hook into p.wait to clear the list first.
             original_wait = popen.wait
+
             def wait_clear():
                 zm.ACTIVE_PROCESSES.clear()
                 return original_wait()
+
             popen.wait = wait_clear
 
             zm.run_transfer_with_progress(
@@ -1945,18 +2020,23 @@ class TestCoverageGaps:
                 toggled[0] = True
                 zm.SHUTTING_DOWN = True
 
-        side_effect = self._make_popen_side_effect([
-            (["rclone error"], 1),
-        ])
+        side_effect = self._make_popen_side_effect(
+            [
+                (["rclone error"], 1),
+            ]
+        )
 
-        with patch("zfs_migration.subprocess.Popen", side_effect=side_effect), \
-             patch("zfs_migration.progress.update", side_effect=toggle_on_progress_update), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.log_error"), \
-             patch("zfs_migration.log_step"):
-
+        with (
+            patch("zfs_migration.subprocess.Popen", side_effect=side_effect),
+            patch(
+                "zfs_migration.progress.update", side_effect=toggle_on_progress_update
+            ),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_error"),
+            patch("zfs_migration.log_step"),
+        ):
             zm.SHUTTING_DOWN = False
             zm.process_job("docs", False, 0, "tank", "media")
 
@@ -1975,19 +2055,22 @@ class TestCoverageGaps:
             if update_count[0] == 2:
                 zm.SHUTTING_DOWN = True
 
-        side_effect = self._make_popen_side_effect([
-            ([""], 0),                          # Phase 1 copy OK
-            (["rclone error"], 1),              # Phase 2 ACL fails
-        ])
+        side_effect = self._make_popen_side_effect(
+            [
+                ([""], 0),  # Phase 1 copy OK
+                (["rclone error"], 1),  # Phase 2 ACL fails
+            ]
+        )
 
-        with patch("zfs_migration.subprocess.Popen", side_effect=side_effect), \
-             patch("zfs_migration.progress.update", side_effect=toggle_on_second_update), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.log_error"), \
-             patch("zfs_migration.log_step"):
-
+        with (
+            patch("zfs_migration.subprocess.Popen", side_effect=side_effect),
+            patch("zfs_migration.progress.update", side_effect=toggle_on_second_update),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_error"),
+            patch("zfs_migration.log_step"),
+        ):
             zm.SHUTTING_DOWN = False
             zm.process_job("docs", False, 0, "tank", "media")
 
@@ -2006,20 +2089,23 @@ class TestCoverageGaps:
             if update_count[0] == 3:
                 zm.SHUTTING_DOWN = True
 
-        side_effect = self._make_popen_side_effect([
-            ([""], 0),                            # Phase 1 OK
-            ([""], 0),                            # Phase 2 OK
-            (["error"], 1),                       # Phase 3 checksum fails
-        ])
+        side_effect = self._make_popen_side_effect(
+            [
+                ([""], 0),  # Phase 1 OK
+                ([""], 0),  # Phase 2 OK
+                (["error"], 1),  # Phase 3 checksum fails
+            ]
+        )
 
-        with patch("zfs_migration.subprocess.Popen", side_effect=side_effect), \
-             patch("zfs_migration.progress.update", side_effect=toggle_on_third_update), \
-             patch("zfs_migration.progress.add_task", return_value=0), \
-             patch("zfs_migration.progress.advance"), \
-             patch("zfs_migration.os.rename"), \
-             patch("zfs_migration.log_error"), \
-             patch("zfs_migration.log_step"):
-
+        with (
+            patch("zfs_migration.subprocess.Popen", side_effect=side_effect),
+            patch("zfs_migration.progress.update", side_effect=toggle_on_third_update),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_error"),
+            patch("zfs_migration.log_step"),
+        ):
             zm.SHUTTING_DOWN = False
             zm.process_job("docs", False, 0, "tank", "media")
 
@@ -2030,6 +2116,7 @@ class TestCoverageGaps:
         script, which pytest cannot do because it imports the module. We
         verify the source code contains the pattern."""
         import inspect
+
         src = inspect.getsource(zm)
         assert "__name__" in src and "main()" in src
 
@@ -2045,41 +2132,49 @@ class TestCoverageGaps:
                     return fake_mnt
                 return Path(str(p))
 
-            with patch("zfs_migration.Path", side_effect=path_side), \
-                 patch("zfs_migration.log_error"), \
-                 patch.object(sys, "exit") as mock_exit:
+            with (
+                patch("zfs_migration.Path", side_effect=path_side),
+                patch("zfs_migration.log_error"),
+                patch.object(sys, "exit") as mock_exit,
+            ):
                 zm.get_zfs_context(pool_dir)
                 mock_exit.assert_called_once_with(1)
 
     def test_rsync_progress_parsing_path(self):
         """Hit the rsync progress parsing branch in run_transfer_with_progress."""
-        popen = FakePopen([
-            "1.234G  50%    50.00MB/s    0:00:00",
-            "sent 123 bytes  received 456 bytes  1158.00 bytes/sec",
-            "total size is 1234567890  speedup is 1234.5",
-        ])
-        with patch("zfs_migration.subprocess.Popen", return_value=popen), \
-             patch("zfs_migration.progress.update") as mock_progress, \
-             patch("zfs_migration.log_step"):
+        popen = FakePopen(
+            [
+                "1.234G  50%    50.00MB/s    0:00:00",
+                "sent 123 bytes  received 456 bytes  1158.00 bytes/sec",
+                "total size is 1234567890  speedup is 1234.5",
+            ]
+        )
+        with (
+            patch("zfs_migration.subprocess.Popen", return_value=popen),
+            patch("zfs_migration.progress.update") as mock_progress,
+            patch("zfs_migration.log_step"),
+        ):
             zm.ACTIVE_PROCESSES.clear()
             result = zm.run_transfer_with_progress(
-                ["rsync", "-aHAX", "src/", "dst/"],
-                0, "job", "Syncing ACLs", "magenta"
+                ["rsync", "-aHAX", "src/", "dst/"], 0, "job", "Syncing ACLs", "magenta"
             )
             assert result[0] is True
             # Verify rsync progress was parsed (completed should be 50.0)
             calls = [c for c in mock_progress.call_args_list if "completed" in str(c)]
-            assert any("50.0" in str(c) for c in calls), \
+            assert any("50.0" in str(c) for c in calls), (
                 f"Expected rsync progress parsing, got: {calls}"
+            )
 
     def test_rclone_move_default_config(self):
         """Hit the config=None default branch in run_rclone_move."""
-        with patch("zfs_migration.run_transfer_with_progress", return_value=(True, "")) as mock_transfer, \
-             patch("zfs_migration.log_step"), \
-             patch("zfs_migration.progress.update"):
-            zm.run_rclone_move(
-                "src", "dst", 0, "job"
-            )
+        with (
+            patch(
+                "zfs_migration.run_transfer_with_progress", return_value=(True, "")
+            ) as mock_transfer,
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.progress.update"),
+        ):
+            zm.run_rclone_move("src", "dst", 0, "job")
             # Verify command was built with default performance flags
             cmd = mock_transfer.call_args[0][0]
             assert "--transfers=4" in cmd
@@ -2089,12 +2184,14 @@ class TestCoverageGaps:
     def test_rclone_move_custom_config(self):
         """Hit the config-is-provided branch in run_rclone_move."""
         config = zm.RcloneConfig(transfers=8, checkers=4, buffer_size="1G")
-        with patch("zfs_migration.run_transfer_with_progress", return_value=(True, "")) as mock_transfer, \
-             patch("zfs_migration.log_step"), \
-             patch("zfs_migration.progress.update"):
-            zm.run_rclone_move(
-                "src", "dst", 0, "job", config=config
-            )
+        with (
+            patch(
+                "zfs_migration.run_transfer_with_progress", return_value=(True, "")
+            ) as mock_transfer,
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.progress.update"),
+        ):
+            zm.run_rclone_move("src", "dst", 0, "job", config=config)
             cmd = mock_transfer.call_args[0][0]
             assert "--transfers=8" in cmd
             assert "--checkers=4" in cmd

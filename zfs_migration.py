@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Deterministic, resumable ZFS dataset promotion and migration script."""
+
 import argparse
 import atexit
 import json
@@ -30,7 +31,9 @@ from rich.progress import (
 # CONFIGURATION & STATE
 # ==========================================
 
-LOG_FILE = Path("/tmp") / f"zfs_migration_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+LOG_FILE = (
+    Path("/tmp") / f"zfs_migration_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+)
 
 ACTIVE_PROCESSES: "list[subprocess.Popen]" = []
 SHUTTING_DOWN = False
@@ -41,6 +44,7 @@ FAILED_JOBS: "list[str]" = []
 @dataclass
 class RcloneConfig:
     """Configuration for rclone transfer performance."""
+
     transfers: int = 4
     checkers: int = 2
     buffer_size: str = "2048M"
@@ -160,8 +164,7 @@ def get_zfs_context(target_path: Path) -> tuple[str, str]:
         return pool, base
     except ValueError:
         log_error(
-            f"Target path '{target_path.resolve()}' "
-            f"is not within /mnt/<pool>/<base>/"
+            f"Target path '{target_path.resolve()}' is not within /mnt/<pool>/<base>/"
         )
         sys.exit(1)
 
@@ -233,7 +236,9 @@ def create_nfs_share(path: str, comment: str = "") -> bool:
     try:
         result = subprocess.run(
             ["midclt", "call", "sharing.nfs.create", json.dumps(payload)],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
         if result.returncode != 0:
             log_error(
@@ -257,8 +262,15 @@ def nfs_share_exists(path: str) -> bool:
     """Check if an NFS share already exists for the given path via midclt."""
     try:
         result = subprocess.run(
-            ["midclt", "call", "sharing.nfs.query", json.dumps([[["path", "=", path]]])],
-            capture_output=True, text=True, timeout=10,
+            [
+                "midclt",
+                "call",
+                "sharing.nfs.query",
+                json.dumps([[["path", "=", path]]]),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=10,
         )
         if result.returncode != 0:
             return False
@@ -273,9 +285,7 @@ def nfs_share_exists(path: str) -> bool:
 # ==========================================
 
 # rsync progress regex (used for Phase 2 ACL sync)
-_rsync_progress_re = re.compile(
-    r"([\d.,]+[a-zA-Z]*)\s+(\d+)%\s+([\d.,]+[a-zA-Z]*/s)"
-)
+_rsync_progress_re = re.compile(r"([\d.,]+[a-zA-Z]*)\s+(\d+)%\s+([\d.,]+[a-zA-Z]*/s)")
 
 
 def run_transfer_with_progress(
@@ -320,9 +330,7 @@ def run_transfer_with_progress(
                 if rclone_match:
                     progress.update(
                         task_id,
-                        description=(
-                            f"[cyan]{job_name} [{phase_color}]({phase_desc})"
-                        ),
+                        description=(f"[cyan]{job_name} [{phase_color}]({phase_desc})"),
                         completed=float(rclone_match.group(2)),
                         transferred=rclone_match.group(1),
                         speed=rclone_match.group(3) or "0 B/s",
@@ -330,9 +338,7 @@ def run_transfer_with_progress(
                 elif rsync_match:
                     progress.update(
                         task_id,
-                        description=(
-                            f"[cyan]{job_name} [{phase_color}]({phase_desc})"
-                        ),
+                        description=(f"[cyan]{job_name} [{phase_color}]({phase_desc})"),
                         completed=float(rsync_match.group(2)),
                         transferred=rsync_match.group(1),
                         speed=rsync_match.group(3) or "0 B/s",
@@ -387,9 +393,7 @@ def run_rclone_move(
         config = RcloneConfig()
 
     log_step(f"[Copy] Starting rclone transfer for: {job_name}")
-    progress.update(
-        task_id, description=f"[cyan]{job_name} [yellow](Checking...)"
-    )
+    progress.update(task_id, description=f"[cyan]{job_name} [yellow](Checking...)")
 
     cmd = [
         "rclone",
@@ -533,9 +537,7 @@ def process_job(
 
     # PHASE 3: [Checksum] Final verification pass (read-only).
     log_step(f"[Checksum] Verifying integrity for: {job_name}")
-    success, err = run_rclone_check(
-        temp_dir, target_dir, task_id, job_name
-    )
+    success, err = run_rclone_check(temp_dir, target_dir, task_id, job_name)
 
     if success:
         # Clean up any remaining temp directories/files
@@ -553,7 +555,7 @@ def process_job(
         )
         log_ok(f"{'Resume ' if is_resume else ''}Complete: {job_name}")
 
-       # PHASE 4: [NFS] Create NFS share via midclt (local TrueNAS CLI)
+        # PHASE 4: [NFS] Create NFS share via midclt (local TrueNAS CLI)
         nfs_ok = True  # Assume success — only False if creation fails
         if not nfs_share_exists(nfs_path):
             log_step(f"[NFS] Creating share for: {nfs_path}")
@@ -609,7 +611,7 @@ def main() -> None:
         default=4,
         help="Directory Worker Pool Size (Default: 4)",
     )
-     # rclone performance options
+    # rclone performance options
     parser.add_argument(
         "--transfers",
         type=int,
@@ -639,9 +641,7 @@ def main() -> None:
 
     target_path = Path(args.path)
     if not target_path.is_dir():
-        log_error(
-            f"Target path does not exist or is not a directory: {target_path}"
-        )
+        log_error(f"Target path does not exist or is not a directory: {target_path}")
         sys.exit(1)
 
     pool, base = get_zfs_context(target_path)
@@ -667,9 +667,7 @@ def main() -> None:
             if is_valid_zfs_name(base_name):
                 temporary_jobs.append(base_name)
             else:
-                log_warn(
-                    f"Invalid ZFS dataset name from tmp, skipping: {base_name}"
-                )
+                log_warn(f"Invalid ZFS dataset name from tmp, skipping: {base_name}")
         else:
             if is_valid_zfs_name(d):
                 normal_jobs.append(d)
