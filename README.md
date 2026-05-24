@@ -21,28 +21,19 @@ Migrate directories to individual ZFS datasets with automatic NFS share export �
 ## Requirements
 
 - **TrueNAS SCALE** (26.0+) — script runs locally via SSH
-- **Python 3.10+**
+- **uv** — Python package manager (<https://github.com/astral-sh/uv>)
 - **rclone** — for data transfer and checksum verification
 - **rsync** — for ACL/xattr metadata sync
 - **midclt** — TrueNAS middleware CLI (pre-installed on TrueNAS SCALE)
-- **rich** — terminal progress display (`pip install rich`)
 
 ## Installation
 
 ```bash
-# Clone and install
+# Clone the repo
 git clone git@github.com:n00b001/directory-to-zfs-dataset-truenas.git
 cd directory-to-zfs-dataset-truenas
 
-# Create virtual environment (recommended)
-python -m venv .venv
-source .venv/bin/activate
-pip install -e ".[test]"
-```
-
-Or with [uv](https://github.com/astral-sh/uv):
-
-```bash
+# Install dependencies (creates .venv automatically)
 uv sync
 ```
 
@@ -50,13 +41,13 @@ uv sync
 
 ```bash
 # Migrate all directories under /mnt/tank/media to ZFS datasets + NFS shares
-python zfs_migration.py /mnt/tank/media
+uv run zfs-migrate /mnt/tank/media
 
 # Auto-confirm, 8 parallel workers
-python zfs_migration.py /mnt/tank/media -y --workers 8
+uv run zfs-migrate /mnt/tank/media -y --workers 8
 
 # Tune rclone performance
-python zfs_migration.py /mnt/tank/media --transfers 8 --checkers 4 --buffer-size 1G
+uv run zfs-migrate /mnt/tank/media --transfers 8 --checkers 4 --buffer-size 1G
 ```
 
 ### Command-line Options
@@ -85,6 +76,19 @@ python zfs_migration.py /mnt/tank/media --transfers 8 --checkers 4 --buffer-size
 ### Resume
 
 If interrupted, re-run with the same path. Directories ending in `-tmp` are detected and resumed. Datasets that already exist are skipped (NFS share is still ensured).
+
+## Development
+
+```bash
+# Install dev dependencies
+uv pip install -e ".[dev,test]"
+
+# Run tests (parallel with xdist, coverage enabled)
+uv run pytest
+
+# Run pre-commit hooks (ruff check + format)
+uv run pre-commit run --all-files
+```
 
 ## Project Structure
 

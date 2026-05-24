@@ -4,20 +4,21 @@
 Deterministic, resumable ZFS dataset promotion and migration script for TrueNAS SCALE.
 
 ## Tooling
-- Package manager: `uv`
+- Package manager: `uv` (always use `uv` — never `python`, `pip`, or `pyenv` directly)
 - Lint/format: `ruff` (via pre-commit hooks)
-- Test: `pytest` (via pre-push hook)
+- Test: `pytest` with `pytest-xdist` + `pytest-cov` (via pre-push hook)
 
 ## Commands
-- Install dev deps: `uv pip install -e ".[dev,test]"`
-- Run pre-commit: `pre-commit run --all-files`
-- Run tests: `python -m pytest -q`
-- Run ruff check: `ruff check .`
-- Run ruff format: `ruff format .`
+- Install deps: `uv sync`
+- Run tests: `uv run pytest`
+- Run pre-commit: `uv run pre-commit run --all-files`
+- Run ruff check: `uv run ruff check .`
+- Run ruff format: `uv run ruff format .`
+- Run script: `uv run zfs-migrate`
 
 ## Git Hooks
 - **pre-commit**: runs `ruff --fix` (auto-fix) then `ruff format`
-- **pre-push**: runs `pytest -q` — push aborts if tests fail
+- **pre-push**: runs `uv run pytest` — push aborts if tests fail
 
 ## Workflow
 - Always commit and push after each change

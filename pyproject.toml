@@ -13,6 +13,7 @@ test = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "pytest-mock>=3.0",
+    "pytest-xdist>=3.0",
 ]
 dev = [
     "pre-commit>=3.0",
@@ -21,6 +22,10 @@ dev = [
 
 [project.scripts]
 zfs-migrate = "zfs_migration:main"
+
+[tool.pytest.ini_options]
+addopts = "-n auto --cov=zfs_migration --cov-report=term-missing --cov-branch -q"
+testpaths = ["."]
 
 [build-system]
 requires = ["hatchling"]
