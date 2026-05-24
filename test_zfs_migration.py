@@ -709,8 +709,8 @@ class TestProcessJob:
             zm.FAILED_JOBS.clear()
             zm.process_job("docs", False, 0, "tank", "media")
 
-            # Phase 2 (ACL rsync) + Phase 3 (rclone check) = 2 calls to run_transfer_with_progress
-            assert mock_transfer.call_count == 2
+            # Phase 2 (ACL rsync) = 1 call to run_transfer_with_progress (checksum phase removed)
+            assert mock_transfer.call_count == 1
             mock_log_ok.assert_called()
 
     def test_resume_job_success(self):
@@ -792,8 +792,8 @@ class TestProcessJob:
             zm.process_job("docs", False, 0, "tank", "media")
             assert "docs" in zm.FAILED_JOBS
 
-    def test_checksum_phase_failure(self):
-        """Test failure during checksum verification phase."""
+    def test_checksum_phase_removed(self):
+        """Test that there is no checksum phase — only copy + ACL."""
         with (
             patch("zfs_migration.dataset_exists", return_value=False),
             patch("zfs_migration.create_dataset"),
@@ -801,24 +801,26 @@ class TestProcessJob:
                 "zfs_migration.run_rclone_move",
                 return_value=(True, ""),
             ),
-            patch.object(
-                zm,
-                "run_transfer_with_progress",
-                side_effect=[
-                    (True, ""),  # ACL sync succeeds
-                    (False, "mismatch"),  # checksum verify fails
-                ],
-            ),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(True, ""),
+            ) as mock_transfer,
             patch("zfs_migration.os.rename"),
+            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("shutil.rmtree"),
             patch("zfs_migration.progress.update"),
             patch("zfs_migration.progress.add_task", return_value=0),
             patch("zfs_migration.progress.advance"),
             patch("zfs_migration.log_error"),
             patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch.object(zm, "create_nfs_share"),
         ):
             zm.FAILED_JOBS.clear()
             zm.process_job("docs", False, 0, "tank", "media")
-            assert "docs" in zm.FAILED_JOBS
+            # Only 1 call: ACL sync (no checksum phase)
+            assert mock_transfer.call_count == 1
+            assert "docs" not in zm.FAILED_JOBS
 
     def test_dataset_exists_creates_nfs_share(self):
         """Test that an existing dataset without NFS share gets one created."""
@@ -1762,8 +1764,12 @@ class TestCoverageGaps:
                     assert submitted_jobs[0][0] == "docs"
                     assert submitted_jobs[0][1] is True  # resume=True
 
-    def test_checksum_failure_not_shutting_down(self):
-        """Test checksum failure when NOT shutting down logs error."""
+    def test_no_checksum_phase(self):
+        """Verify there is no checksum phase — only copy + ACL.
+
+        The checksum phase was removed because rclone move already verifies
+        each file before removing the source, making a separate check
+        redundant. Destination may have extra files — that's fine."""
         zm.SHUTTING_DOWN = False
         zm.FAILED_JOBS.clear()
 
@@ -1776,11 +1782,8 @@ class TestCoverageGaps:
             ),
             patch(
                 "zfs_migration.run_transfer_with_progress",
-                side_effect=[
-                    (True, ""),  # ACL sync succeeds
-                    (False, "checksum mismatch"),  # checksum verify fails
-                ],
-            ),
+                return_value=(True, ""),
+            ) as mock_transfer,
             patch("zfs_migration.progress.update"),
             patch("zfs_migration.progress.add_task", return_value=0),
             patch("zfs_migration.progress.advance"),
@@ -1790,12 +1793,15 @@ class TestCoverageGaps:
             patch("shutil.rmtree"),
             patch("zfs_migration.log_step"),
             patch("zfs_migration.log_error") as mock_err,
+            patch("zfs_migration.log_ok"),
             patch.object(zm, "create_nfs_share"),
         ):
             zm.process_job("docs", False, 0, "tank", "media")
-            assert "docs" in zm.FAILED_JOBS
+            # Only 1 call (ACL sync) — no checksum phase
+            assert mock_transfer.call_count == 1
+            assert "docs" not in zm.FAILED_JOBS
             calls = [str(c) for c in mock_err.call_args_list]
-            assert any("[Checksum]" in c for c in calls)
+            assert not any("[Checksum]" in c for c in calls)
 
     def test_nfs_failure_not_shutting_down(self):
         """Test NFS share failure when NOT shutting down logs warning."""
@@ -1818,11 +1824,12 @@ class TestCoverageGaps:
             patch("zfs_migration.progress.advance"),
             patch("zfs_migration.os.rename"),
             patch("zfs_migration.os.makedirs"),
-            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("zfs_migration.os.path.exists", return_value=True),
             patch("shutil.rmtree"),
             patch("zfs_migration.log_step"),
             patch("zfs_migration.log_ok"),
             patch("zfs_migration.log_warn") as mock_warn,
+            patch("zfs_migration.nfs_share_exists", return_value=False),
             patch.object(zm, "create_nfs_share", return_value=False),
         ):
             zm.process_job("docs", False, 0, "tank", "media")
@@ -1955,10 +1962,11 @@ class TestCoverageGaps:
             patch("zfs_migration.progress.advance"),
             patch("zfs_migration.os.rename"),
             patch("zfs_migration.os.makedirs"),
-            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("zfs_migration.os.path.exists", return_value=True),
             patch("shutil.rmtree"),
             patch("zfs_migration.log_step"),
             patch("zfs_migration.log_ok") as mock_log_ok,
+            patch("zfs_migration.nfs_share_exists", return_value=False),
             patch.object(zm, "create_nfs_share", return_value=True) as mock_nfs,
         ):
             zm.process_job("docs", False, 0, "tank", "media")
@@ -2360,7 +2368,7 @@ class TestProcessJobStateMatrix:
             patch("zfs_migration.progress.add_task", return_value=0),
             patch("zfs_migration.progress.advance"),
             patch("zfs_migration.os.rename"),
-            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("zfs_migration.os.path.exists", return_value=True),
             patch("shutil.rmtree"),
             patch("zfs_migration.log_step"),
             patch("zfs_migration.log_ok"),
@@ -2390,7 +2398,7 @@ class TestProcessJobStateMatrix:
             patch("zfs_migration.progress.add_task", return_value=0),
             patch("zfs_migration.progress.advance"),
             patch("zfs_migration.os.makedirs"),
-            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("zfs_migration.os.path.exists", return_value=True),
             patch("shutil.rmtree"),
             patch("zfs_migration.log_step"),
             patch("zfs_migration.log_ok"),
@@ -2436,7 +2444,7 @@ class TestProcessJobStateMatrix:
             patch("zfs_migration.progress.add_task", return_value=0),
             patch("zfs_migration.progress.advance"),
             patch("zfs_migration.os.makedirs"),
-            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("zfs_migration.os.path.exists", return_value=True),
             patch("shutil.rmtree"),
             patch("zfs_migration.log_step"),
             patch("zfs_migration.log_ok"),
@@ -2498,17 +2506,18 @@ class TestProcessJobStateMatrix:
             mock_nfs_create.assert_not_called()
             assert "docs" in zm.FAILED_JOBS
 
-    def test_checksum_fail_no_nfs_attempted(self):
-        """Checksum fails → NFS share must not be attempted."""
+    def test_checksum_phase_removed_no_nfs_on_acl_fail(self):
+        """Checksum phase removed — ACL fails → NFS share must not be attempted."""
         with (
             patch("zfs_migration.dataset_exists", return_value=False),
             patch("zfs_migration.create_dataset"),
             patch("zfs_migration.run_rclone_move", return_value=(True, "")),
-            patch("zfs_migration.run_transfer_with_progress", return_value=(True, "")),
-            patch("zfs_migration.run_rclone_check", return_value=(False, "mismatch")),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(False, "mismatch"),
+            ),
             patch("zfs_migration.progress.update"),
             patch("zfs_migration.progress.add_task", return_value=0),
-            patch("zfs_migration.progress.advance"),
             patch("zfs_migration.os.rename"),
             patch("zfs_migration.log_error"),
             patch("zfs_migration.log_step"),
@@ -2536,7 +2545,7 @@ class TestProcessJobStateMatrix:
             patch("zfs_migration.progress.add_task", return_value=0),
             patch("zfs_migration.progress.advance"),
             patch("zfs_migration.os.rename"),
-            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("zfs_migration.os.path.exists", return_value=True),
             patch("shutil.rmtree"),
             patch("zfs_migration.log_step"),
             patch("zfs_migration.log_ok"),
@@ -2556,7 +2565,7 @@ class TestProcessJobStateMatrix:
             patch("zfs_migration.progress.add_task", return_value=0),
             patch("zfs_migration.progress.advance"),
             patch("zfs_migration.os.makedirs"),
-            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("zfs_migration.os.path.exists", return_value=True),
             patch("shutil.rmtree"),
             patch("zfs_migration.log_step"),
             patch("zfs_migration.log_ok"),

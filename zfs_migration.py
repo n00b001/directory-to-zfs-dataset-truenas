@@ -427,31 +427,6 @@ def run_rclone_move(
     )
 
 
-def run_rclone_check(
-    src: str,
-    dest: str,
-    task_id: int,
-    job_name: str,
-) -> tuple[bool, str]:
-    """Verify file integrity between src and dest using rclone check.
-
-    Returns (False, error_message) if mismatches found, (True, "") on success.
-    """
-    log_step(f"[Checksum] Verifying integrity for: {job_name}")
-    cmd = [
-        "rclone",
-        "check",
-        "--checksum",
-        "--fast-list",
-        "--one-way",
-        f"{src}/",
-        f"{dest}/",
-    ]
-    return run_transfer_with_progress(
-        cmd, task_id, job_name, "Verifying Checksum", "yellow"
-    )
-
-
 # ==========================================
 # JOB EXECUTION
 # ==========================================
@@ -556,21 +531,16 @@ def process_job(
         )
         return
 
-    # PHASE 3: [Checksum] Final verification pass (read-only).
-    log_step(f"[Checksum] Verifying integrity for: {job_name}")
-    success, err = run_rclone_check(temp_dir, target_dir, task_id, job_name)
+    # Clean up any remaining temp directories/files
+    if os.path.exists(temp_dir):
+        log_step(f"Cleaning up temporary directory: {temp_dir}")
+        try:
+            import shutil
 
-    if success:
-        # Clean up any remaining temp directories/files
-        if os.path.exists(temp_dir):
-            log_step(f"Cleaning up temporary directory: {temp_dir}")
-            try:
-                import shutil
-
-                shutil.rmtree(temp_dir)
-                log_ok(f"Cleaned up: {temp_dir}")
-            except OSError as e:
-                log_warn(f"Failed to clean up {temp_dir}: {e}")
+            shutil.rmtree(temp_dir)
+            log_ok(f"Cleaned up: {temp_dir}")
+        except OSError as e:
+            log_warn(f"Failed to clean up {temp_dir}: {e}")
         progress.update(
             task_id,
             description=f"[green]{job_name} [white](Done)",
@@ -595,21 +565,6 @@ def process_job(
             log_ok(f"[NFS] Share created: {nfs_path}")
         else:
             log_warn(f"[NFS] Failed to create share for: {nfs_path}")
-    else:
-        if not SHUTTING_DOWN:
-            log_error(
-                f"[Checksum] Verification failed. "
-                f"Temporary data retained: {temp_dir}\nReason:\n{err}"
-            )
-            FAILED_JOBS.append(job_name)
-        progress.update(
-            task_id,
-            description=f"[red]{job_name} [white](Failed)",
-            completed=100,
-            transferred="",
-            speed="",
-            total=100,
-        )
 
     progress.advance(global_task)
 
