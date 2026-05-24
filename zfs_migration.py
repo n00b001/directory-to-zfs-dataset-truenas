@@ -280,7 +280,12 @@ def nfs_share_exists(path: str) -> bool:
             return False
         resp = json.loads(result.stdout)
         return len(resp) > 0
-    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
+    except (
+        FileNotFoundError,
+        subprocess.TimeoutExpired,
+        json.JSONDecodeError,
+        TypeError,
+    ) as e:
         log_warn(f"[NFS] Failed to check share existence for {path}: {e}")
         return False
 
