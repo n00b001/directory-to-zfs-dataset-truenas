@@ -43,9 +43,9 @@ class RcloneConfig:
     """Configuration for rclone transfer performance."""
     transfers: int = 4
     checkers: int = 2
-    buffer_size: str = "256M"
-    multi_thread_streams: int = 4
-    multi_thread_cutoff: str = "64M"
+    buffer_size: str = "2048M"
+    multi_thread_streams: int = 16
+    multi_thread_cutoff: str = "16M"
 
 
 # rclone progress output regex
@@ -395,18 +395,18 @@ def run_rclone_move(
         "rclone",
         "move",
         "-P",
-        "--checksum",
-        "--perms",
-        "--fast-list",
-        "--no-traverse",
-        f"--transfers={config.transfers}",
-        f"--checkers={config.checkers}",
-        f"--buffer-size={config.buffer_size}",
-        f"--multi-thread-streams={config.multi_thread_streams}",
-        f"--multi-thread-cutoff={config.multi_thread_cutoff}",
-        "--use-mmap",
         f"{src}/",
         f"{dest}/",
+        "--transfers=" + str(config.transfers),
+        "--checkers=" + str(config.checkers),
+        "--fast-list",
+        "--buffer-size=" + config.buffer_size,
+        "--use-mmap",
+        "--multi-thread-streams=" + str(config.multi_thread_streams),
+        "--multi-thread-cutoff=" + config.multi_thread_cutoff,
+        "--no-traverse",
+        "--delete-empty-src-dirs",
+        "--size-only",
     ]
     return run_transfer_with_progress(
         cmd, task_id, job_name, "Copying+Verifying", "blue"
@@ -625,8 +625,8 @@ def main() -> None:
     parser.add_argument(
         "--buffer-size",
         type=str,
-        default="256M",
-        help="rclone in-memory buffer size per file (default: 256M)",
+        default="2048M",
+        help="rclone in-memory buffer size per file (default: 2048M)",
     )
 
     args = parser.parse_args()

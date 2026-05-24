@@ -595,17 +595,17 @@ class TestRunRcloneMove:
         assert "rclone" in cmd
         assert "move" in cmd
         assert "-P" in cmd
-        assert "--checksum" in cmd
-        assert "--perms" in cmd
         assert "--fast-list" in cmd
         assert "--no-traverse" in cmd
+        assert "--delete-empty-src-dirs" in cmd
+        assert "--size-only" in cmd
         # Performance flags
         assert "--transfers=4" in cmd
         assert "--checkers=2" in cmd
-        assert "--buffer-size=256M" in cmd
+        assert "--buffer-size=2048M" in cmd
         assert "--use-mmap" in cmd
-        assert "--multi-thread-streams=4" in cmd
-        assert "--multi-thread-cutoff=64M" in cmd
+        assert "--multi-thread-streams=16" in cmd
+        assert "--multi-thread-cutoff=16M" in cmd
 
 
 # ==========================================
@@ -1081,10 +1081,10 @@ class TestRunRcloneMoveFull:
         assert "rclone" in cmd
         assert "move" in cmd
         assert "-P" in cmd
-        assert "--checksum" in cmd
-        assert "--perms" in cmd
         assert "--fast-list" in cmd
         assert "--no-traverse" in cmd
+        assert "--delete-empty-src-dirs" in cmd
+        assert "--size-only" in cmd
 
     @patch("zfs_migration.subprocess.Popen")
     @patch("zfs_migration.progress.update")
@@ -2084,7 +2084,7 @@ class TestCoverageGaps:
             cmd = mock_transfer.call_args[0][0]
             assert "--transfers=4" in cmd
             assert "--checkers=2" in cmd
-            assert "--buffer-size=256M" in cmd
+            assert "--buffer-size=2048M" in cmd
 
     def test_rclone_move_custom_config(self):
         """Hit the config-is-provided branch in run_rclone_move."""
