@@ -443,6 +443,7 @@ def run_rclone_check(
         "check",
         "--checksum",
         "--fast-list",
+        "--one-way",
         f"{src}/",
         f"{dest}/",
     ]
