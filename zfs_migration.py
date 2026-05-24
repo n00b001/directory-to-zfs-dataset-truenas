@@ -276,7 +276,8 @@ def nfs_share_exists(path: str) -> bool:
             return False
         resp = json.loads(result.stdout)
         return len(resp) > 0
-    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError):
+    except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError) as e:
+        log_warn(f"[NFS] Failed to check share existence for {path}: {e}")
         return False
 
 
@@ -477,6 +478,8 @@ def process_job(
                     path=nfs_path,
                     comment=f"Migration share: {job_name}",
                 )
+            else:
+                log_ok(f"[NFS] Share already exists: {nfs_path}")
             if nfs_ok:
                 log_ok(f"[NFS] Share ready: {nfs_path}")
             else:
@@ -568,6 +571,8 @@ def process_job(
                 path=nfs_path,
                 comment=f"Migration share: {job_name}",
             )
+        else:
+            log_ok(f"[NFS] Share already exists: {nfs_path}")
         if nfs_ok:
             log_ok(f"[NFS] Share created: {nfs_path}")
         else:
