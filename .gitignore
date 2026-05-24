@@ -1,0 +1,37 @@
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+.eggs/
+*.egg/
+
+# Virtual environment
+.venv/
+
+# Testing
+.coverage
+htmlcov/
+coverage.json
+coverage_html/
+.pytest_cache/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OMC / Claude Code state
+.omc/
+.claude/
+
+# Logs
+logs/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

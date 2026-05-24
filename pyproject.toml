@@ -1,0 +1,23 @@
+[project]
+name = "zfs-migration"
+version = "0.1.0"
+description = "Deterministic, resumable ZFS dataset promotion and migration script"
+requires-python = ">=3.10"
+dependencies = [
+    "rich>=13.0.0",
+    "requests>=2.28.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-mock>=3.0",
+]
+
+[project.scripts]
+zfs-migrate = "zfs_migration:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
