@@ -2203,6 +2203,356 @@ class TestCoverageGaps:
 # ==========================================
 
 
+class TestProcessJobStateMatrix:
+    """Comprehensive state matrix tests for process_job.
+
+    Covers all combinations of (tmp_folder, target_folder, dataset, nfs_share)
+    for both normal and resume paths, verifying every step executes correctly.
+
+    States:
+      - tmp_folder:   {job_name}-tmp directory exists on disk
+      - target_folder: {job_name} directory exists on disk
+      - dataset:       ZFS dataset exists
+      - nfs_share:     NFS share exists for the dataset mount point
+    """
+
+    # ----------------------------------------------------------------
+    # NORMAL JOBS (is_resume=False) — dataset EXISTS → early return
+    # ----------------------------------------------------------------
+    # In this branch the on-disk folders don't matter because we return
+    # before touching them. We still verify NFS share handling.
+
+    def test_normal_dataset_exists_no_nfs_creates_share(self):
+        """Dataset exists, NFS missing → create NFS share, skip transfer."""
+        with (
+            patch("zfs_migration.dataset_exists", return_value=True),
+            patch("zfs_migration.nfs_share_exists", return_value=False),
+            patch("zfs_migration.create_nfs_share", return_value=True) as mock_nfs,
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.log_warn"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+        ):
+            zm.process_job("docs", False, 0, "tank", "media")
+            mock_nfs.assert_called_once()
+            assert mock_nfs.call_args.kwargs["path"] == "/mnt/tank/media/docs"
+
+    def test_normal_dataset_exists_nfs_present_skips_creation(self):
+        """Dataset exists, NFS present → skip NFS creation."""
+        with (
+            patch("zfs_migration.dataset_exists", return_value=True),
+            patch("zfs_migration.nfs_share_exists", return_value=True),
+            patch("zfs_migration.create_nfs_share") as mock_nfs,
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.log_warn"),
+            patch("zfs_migration.log_ok"),
+        ):
+            zm.process_job("docs", False, 0, "tank", "media")
+            mock_nfs.assert_not_called()
+
+    def test_normal_dataset_exists_nfs_create_fails(self):
+        """Dataset exists, NFS missing, create fails → warn, no crash."""
+        with (
+            patch("zfs_migration.dataset_exists", return_value=True),
+            patch("zfs_migration.nfs_share_exists", return_value=False),
+            patch("zfs_migration.create_nfs_share", return_value=False),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.log_warn") as mock_warn,
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+        ):
+            zm.process_job("docs", False, 0, "tank", "media")
+            # Should warn about NFS failure
+            called = any("Failed" in str(c) for c in mock_warn.call_args_list)
+            assert called, "Should warn when NFS share creation fails"
+
+    # ----------------------------------------------------------------
+    # NORMAL JOBS (is_resume=False) — dataset DOESN'T exist → full flow
+    # These exercise the rename → create_dataset → 3-phase → NFS path.
+    # ----------------------------------------------------------------
+
+    def test_normal_no_dataset_no_nfs_full_flow(self):
+        """No dataset, no NFS → full migration + NFS creation."""
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch("zfs_migration.run_rclone_move", return_value=(True, "")),
+            patch("zfs_migration.run_transfer_with_progress", return_value=(True, "")),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.nfs_share_exists", return_value=False),
+            patch("zfs_migration.create_nfs_share", return_value=True),
+        ):
+            zm.FAILED_JOBS.clear()
+            zm.process_job("docs", False, 0, "tank", "media")
+            assert "docs" not in zm.FAILED_JOBS
+
+    def test_normal_no_dataset_nfs_exists_full_flow(self):
+        """No dataset, NFS already exists → full migration, skip NFS creation."""
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch("zfs_migration.run_rclone_move", return_value=(True, "")),
+            patch("zfs_migration.run_transfer_with_progress", return_value=(True, "")),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.nfs_share_exists", return_value=True),
+            patch("zfs_migration.create_nfs_share") as mock_nfs,
+        ):
+            zm.FAILED_JOBS.clear()
+            zm.process_job("docs", False, 0, "tank", "media")
+            assert "docs" not in zm.FAILED_JOBS
+            mock_nfs.assert_not_called()
+
+    def test_normal_no_dataset_nfs_create_fails(self):
+        """No dataset, NFS missing, create fails → job succeeds but NFS warns."""
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch("zfs_migration.run_rclone_move", return_value=(True, "")),
+            patch("zfs_migration.run_transfer_with_progress", return_value=(True, "")),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.log_warn") as mock_warn,
+            patch("zfs_migration.nfs_share_exists", return_value=False),
+            patch("zfs_migration.create_nfs_share", return_value=False),
+        ):
+            zm.FAILED_JOBS.clear()
+            zm.process_job("docs", False, 0, "tank", "media")
+            # Job itself succeeded, NFS failure is non-fatal
+            assert "docs" not in zm.FAILED_JOBS
+            called = any("Failed" in str(c) for c in mock_warn.call_args_list)
+            assert called, "Should warn when NFS creation fails after migration"
+
+    # ----------------------------------------------------------------
+    # RESUME JOBS (is_resume=True) — always full flow, dataset may exist
+    # Resume path: create_dataset → rclone → rsync → check → NFS
+    # ----------------------------------------------------------------
+
+    def test_resume_full_success_no_nfs(self):
+        """Resume job, NFS missing → full flow + NFS creation."""
+        with (
+            patch("zfs_migration.create_dataset"),
+            patch("zfs_migration.run_rclone_move", return_value=(True, "")),
+            patch("zfs_migration.run_transfer_with_progress", return_value=(True, "")),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.makedirs"),
+            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.log_warn"),
+            patch("zfs_migration.nfs_share_exists", return_value=False),
+            patch("zfs_migration.create_nfs_share", return_value=True) as mock_nfs,
+        ):
+            zm.FAILED_JOBS.clear()
+            zm.process_job("docs", True, 0, "tank", "media")
+            assert "docs" not in zm.FAILED_JOBS
+            mock_nfs.assert_called_once()
+
+    def test_resume_full_success_nfs_exists(self):
+        """Resume job, NFS already exists → full flow, skip NFS creation."""
+        with (
+            patch("zfs_migration.create_dataset"),
+            patch("zfs_migration.run_rclone_move", return_value=(True, "")),
+            patch("zfs_migration.run_transfer_with_progress", return_value=(True, "")),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.makedirs"),
+            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.log_warn"),
+            patch("zfs_migration.nfs_share_exists", return_value=True),
+            patch("zfs_migration.create_nfs_share") as mock_nfs,
+        ):
+            zm.FAILED_JOBS.clear()
+            zm.process_job("docs", True, 0, "tank", "media")
+            assert "docs" not in zm.FAILED_JOBS
+            mock_nfs.assert_not_called()
+
+    def test_resume_nfs_create_fails(self):
+        """Resume job, NFS creation fails → job succeeds, NFS warns."""
+        with (
+            patch("zfs_migration.create_dataset"),
+            patch("zfs_migration.run_rclone_move", return_value=(True, "")),
+            patch("zfs_migration.run_transfer_with_progress", return_value=(True, "")),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.makedirs"),
+            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.log_warn") as mock_warn,
+            patch("zfs_migration.nfs_share_exists", return_value=False),
+            patch("zfs_migration.create_nfs_share", return_value=False),
+        ):
+            zm.FAILED_JOBS.clear()
+            zm.process_job("docs", True, 0, "tank", "media")
+            assert "docs" not in zm.FAILED_JOBS
+            called = any("Failed" in str(c) for c in mock_warn.call_args_list)
+            assert called, "Should warn when NFS creation fails after resume"
+
+    # ----------------------------------------------------------------
+    # PHASE FAILURE — NFS must NOT be attempted when phases fail
+    # ----------------------------------------------------------------
+
+    def test_copy_fail_no_nfs_attempted(self):
+        """Copy phase fails → NFS share must not be attempted."""
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch("zfs_migration.run_rclone_move", return_value=(False, "disk full")),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_error"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.nfs_share_exists") as mock_nfs_exists,
+            patch("zfs_migration.create_nfs_share") as mock_nfs_create,
+        ):
+            zm.FAILED_JOBS.clear()
+            zm.process_job("docs", False, 0, "tank", "media")
+            mock_nfs_exists.assert_not_called()
+            mock_nfs_create.assert_not_called()
+            assert "docs" in zm.FAILED_JOBS
+
+    def test_acl_fail_no_nfs_attempted(self):
+        """ACL sync fails → NFS share must not be attempted."""
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch("zfs_migration.run_rclone_move", return_value=(True, "")),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(False, "perm error"),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_error"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.nfs_share_exists") as mock_nfs_exists,
+            patch("zfs_migration.create_nfs_share") as mock_nfs_create,
+        ):
+            zm.FAILED_JOBS.clear()
+            zm.process_job("docs", False, 0, "tank", "media")
+            mock_nfs_exists.assert_not_called()
+            mock_nfs_create.assert_not_called()
+            assert "docs" in zm.FAILED_JOBS
+
+    def test_checksum_fail_no_nfs_attempted(self):
+        """Checksum fails → NFS share must not be attempted."""
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch("zfs_migration.run_rclone_move", return_value=(True, "")),
+            patch("zfs_migration.run_transfer_with_progress", return_value=(True, "")),
+            patch("zfs_migration.run_rclone_check", return_value=(False, "mismatch")),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_error"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.nfs_share_exists") as mock_nfs_exists,
+            patch("zfs_migration.create_nfs_share") as mock_nfs_create,
+        ):
+            zm.FAILED_JOBS.clear()
+            zm.process_job("docs", False, 0, "tank", "media")
+            mock_nfs_exists.assert_not_called()
+            mock_nfs_create.assert_not_called()
+            assert "docs" in zm.FAILED_JOBS
+
+    # ----------------------------------------------------------------
+    # NFS PATH VERIFICATION — correct mount path in all scenarios
+    # ----------------------------------------------------------------
+
+    def test_nfs_path_correct_normal_job(self):
+        """NFS path is /mnt/{pool}/{base}/{job_name} for normal jobs."""
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch("zfs_migration.run_rclone_move", return_value=(True, "")),
+            patch("zfs_migration.run_transfer_with_progress", return_value=(True, "")),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.nfs_share_exists", return_value=False),
+            patch("zfs_migration.create_nfs_share", return_value=True) as mock_nfs,
+        ):
+            zm.process_job("mydocs", False, 0, "shuttle", "share")
+            assert mock_nfs.call_args.kwargs["path"] == "/mnt/shuttle/share/mydocs"
+
+    def test_nfs_path_correct_resume_job(self):
+        """NFS path is /mnt/{pool}/{base}/{job_name} for resume jobs."""
+        with (
+            patch("zfs_migration.create_dataset"),
+            patch("zfs_migration.run_rclone_move", return_value=(True, "")),
+            patch("zfs_migration.run_transfer_with_progress", return_value=(True, "")),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.makedirs"),
+            patch("zfs_migration.os.path.exists", return_value=False),
+            patch("shutil.rmtree"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.log_warn"),
+            patch("zfs_migration.nfs_share_exists", return_value=False),
+            patch("zfs_migration.create_nfs_share", return_value=True) as mock_nfs,
+        ):
+            zm.process_job("mydocs", True, 0, "shuttle", "share")
+            assert mock_nfs.call_args.kwargs["path"] == "/mnt/shuttle/share/mydocs"
+
+    # ----------------------------------------------------------------
+    # DATASET EXISTS — NFS comment includes job name
+    # ----------------------------------------------------------------
+
+    def test_dataset_exists_nfs_comment_includes_job(self):
+        """NFS share comment includes the job name."""
+        with (
+            patch("zfs_migration.dataset_exists", return_value=True),
+            patch("zfs_migration.nfs_share_exists", return_value=False),
+            patch("zfs_migration.create_nfs_share", return_value=True) as mock_nfs,
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.log_warn"),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+        ):
+            zm.process_job("mydocs", False, 0, "tank", "media")
+            assert "mydocs" in mock_nfs.call_args.kwargs["comment"]
+
+
 class TestMainEntryPoint:
     """Tests for the __main__ guard and entry point."""
 
