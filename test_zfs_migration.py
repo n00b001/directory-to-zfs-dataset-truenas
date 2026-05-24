@@ -411,7 +411,9 @@ class TestNfsShareExists:
     @patch("zfs_migration.subprocess.run")
     def test_exists(self, mock_run):
         mock_run.return_value = MagicMock(
-            returncode=0, stdout=json.dumps([{"id": 1}]), stderr=""
+            returncode=0,
+            stdout=json.dumps([{"id": 1, "path": "/mnt/tank/data"}]),
+            stderr="",
         )
         assert zm.nfs_share_exists("/mnt/tank/data") is True
 

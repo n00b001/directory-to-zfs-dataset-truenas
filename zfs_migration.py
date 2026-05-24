@@ -259,27 +259,27 @@ def create_nfs_share(path: str, comment: str = "") -> bool:
 
 
 def nfs_share_exists(path: str) -> bool:
-    """Check if an NFS share already exists for the given path via midclt."""
+    """Check if an NFS share already exists for the given path via midclt.
+
+    Queries all NFS shares and filters locally — the midclt CLI doesn't
+    accept path-based filters for sharing.nfs.query.
+    """
     try:
         result = subprocess.run(
             [
                 "midclt",
                 "call",
                 "sharing.nfs.query",
-                json.dumps([[["path", "=", path]]]),
+                "[]",
             ],
             capture_output=True,
             text=True,
             timeout=10,
         )
         if result.returncode != 0:
-            log_warn(
-                f"[NFS] midclt query failed (exit {result.returncode}) for '{path}': "
-                f"{result.stderr.strip() or result.stdout.strip()}"
-            )
             return False
-        resp = json.loads(result.stdout)
-        return len(resp) > 0
+        shares = json.loads(result.stdout)
+        return any(share.get("path") == path for share in shares)
     except (
         FileNotFoundError,
         subprocess.TimeoutExpired,
