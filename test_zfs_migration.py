@@ -1443,6 +1443,37 @@ class TestCoverageGaps:
             zm.process_job("docs", False, 0, "tank", "media")
             mock_rmtree.assert_called_once()
 
+    def test_temp_dir_cleanup_oserror(self):
+        """Test that OSError during shutil.rmtree is caught and logged as a warning."""
+        zm.SHUTTING_DOWN = False
+        zm.FAILED_JOBS.clear()
+
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                return_value=(True, ""),
+            ),
+            patch(
+                "zfs_migration.run_transfer_with_progress",
+                return_value=(True, ""),
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.os.makedirs"),
+            patch("zfs_migration.os.path.exists", return_value=True),
+            patch("shutil.rmtree", side_effect=OSError("permission denied")),
+            patch("zfs_migration.log_step"),
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.log_warn") as mock_warn,
+            patch.object(zm, "create_nfs_share"),
+        ):
+            zm.process_job("docs", False, 0, "tank", "media")
+            mock_warn.assert_any_call("Failed to clean up docs-tmp: permission denied")
+
     def test_nfs_share_already_exists_after_migration(self):
         """Test that when NFS share already exists, creation is skipped.
 

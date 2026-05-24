@@ -127,8 +127,8 @@ def kill_all_children() -> None:
     for p in ACTIVE_PROCESSES:
         try:
             p.terminate()
-        except Exception:
-            pass
+        except Exception as e:
+            log_warn(f"Failed to terminate process {p.pid}: {e}")
     subprocess.run(["pkill", "-P", str(os.getpid())], capture_output=True)
     subprocess.run(["pkill", "-f", "rclone"], capture_output=True)
 
@@ -273,6 +273,10 @@ def nfs_share_exists(path: str) -> bool:
             timeout=10,
         )
         if result.returncode != 0:
+            log_warn(
+                f"[NFS] midclt query failed (exit {result.returncode}) for '{path}': "
+                f"{result.stderr.strip() or result.stdout.strip()}"
+            )
             return False
         resp = json.loads(result.stdout)
         return len(resp) > 0
@@ -457,6 +461,7 @@ def process_job(
 ) -> None:
     """Process a single migration job (copy, verify, create NFS share)."""
     if SHUTTING_DOWN:
+        log_warn(f"Skipping {job_name}: shutting down")
         return
 
     temp_dir = f"{job_name}-tmp"
@@ -487,11 +492,13 @@ def process_job(
             progress.advance(global_task)
             return
         log_step(f"Processing: {job_name}")
+        log_step(f"Renaming {target_dir} → {temp_dir}")
         os.rename(target_dir, temp_dir)
 
     if is_resume:
         log_step(f"Creating missing dataset (if applicable): {dataset}")
     create_dataset(dataset)
+    log_ok(f"Dataset ready: {dataset}")
     if is_resume:
         os.makedirs(target_dir, exist_ok=True)
 
@@ -550,9 +557,14 @@ def process_job(
     if success:
         # Clean up any remaining temp directories/files
         if os.path.exists(temp_dir):
-            import shutil
+            log_step(f"Cleaning up temporary directory: {temp_dir}")
+            try:
+                import shutil
 
-            shutil.rmtree(temp_dir)
+                shutil.rmtree(temp_dir)
+                log_ok(f"Cleaned up: {temp_dir}")
+            except OSError as e:
+                log_warn(f"Failed to clean up {temp_dir}: {e}")
         progress.update(
             task_id,
             description=f"[green]{job_name} [white](Done)",
@@ -667,6 +679,7 @@ def main() -> None:
 
     for d in dirs:
         if should_skip_folder(d):
+            log_info(f"Skipping (hidden/system): {d}")
             continue
         if d.endswith("-tmp-tmp"):
             log_warn(f"Prohibited nesting state detected, skipping: {d}")
