@@ -622,14 +622,13 @@ class TestRunRcloneMove:
         assert "--fast-list" in cmd
         assert "--no-traverse" in cmd
         assert "--delete-empty-src-dirs" in cmd
-        assert "--size-only" in cmd
         # Performance flags
-        assert "--transfers=4" in cmd
-        assert "--checkers=2" in cmd
-        assert "--buffer-size=2048M" in cmd
+        assert "--transfers=32" in cmd
+        assert "--checkers=16" in cmd
+        assert "--buffer-size=512M" in cmd
         assert "--use-mmap" in cmd
-        assert "--multi-thread-streams=16" in cmd
-        assert "--multi-thread-cutoff=16M" in cmd
+        assert "--multi-thread-streams=8" in cmd
+        assert "--multi-thread-cutoff=4G" in cmd
 
 
 # ==========================================
@@ -693,15 +692,10 @@ class TestProcessJob:
                 "zfs_migration.run_rclone_move",
                 return_value=(True, ""),
             ),
-            patch(
-                "zfs_migration.run_transfer_with_progress",
-                return_value=(True, ""),
-            ) as mock_transfer,
             patch("zfs_migration.progress.update"),
             patch("zfs_migration.progress.add_task", return_value=0),
             patch("zfs_migration.progress.advance"),
             patch("zfs_migration.os.rename"),
-            patch("shutil.rmtree"),
             patch("zfs_migration.log_step"),
             patch("zfs_migration.log_ok") as mock_log_ok,
             patch.object(zm, "create_nfs_share"),
@@ -709,8 +703,7 @@ class TestProcessJob:
             zm.FAILED_JOBS.clear()
             zm.process_job("docs", False, 0, "tank", "media")
 
-            # Phase 2 (ACL rsync) = 1 call to run_transfer_with_progress (checksum phase removed)
-            assert mock_transfer.call_count == 1
+            # Only rclone move is called (ACL phase removed)
             mock_log_ok.assert_called()
 
     def test_resume_job_success(self):
@@ -721,15 +714,10 @@ class TestProcessJob:
                 "zfs_migration.run_rclone_move",
                 return_value=(True, ""),
             ),
-            patch(
-                "zfs_migration.run_transfer_with_progress",
-                return_value=(True, ""),
-            ),
             patch("zfs_migration.progress.update"),
             patch("zfs_migration.progress.add_task", return_value=0),
             patch("zfs_migration.progress.advance"),
             patch("zfs_migration.os.makedirs"),
-            patch("shutil.rmtree"),
             patch("zfs_migration.log_step"),
             patch("zfs_migration.log_ok"),
             patch("zfs_migration.log_warn"),
@@ -768,32 +756,30 @@ class TestProcessJob:
             zm.process_job("docs", False, 0, "tank", "media")
             assert "docs" in zm.FAILED_JOBS
 
-    def test_acl_phase_failure(self):
-        """Test failure during ACL sync phase."""
+    def test_copy_phase_failure_permission_denied(self):
+        """Test failure during copy phase with permission denied."""
         with (
             patch("zfs_migration.dataset_exists", return_value=False),
             patch("zfs_migration.create_dataset"),
             patch(
                 "zfs_migration.run_rclone_move",
-                return_value=(True, ""),
-            ),
-            patch(
-                "zfs_migration.run_transfer_with_progress",
                 return_value=(False, "permission denied"),
             ),
             patch("zfs_migration.progress.update"),
             patch("zfs_migration.progress.add_task", return_value=0),
             patch("zfs_migration.progress.advance"),
             patch("zfs_migration.os.rename"),
-            patch("zfs_migration.log_error"),
+            patch("zfs_migration.log_error") as mock_err,
             patch("zfs_migration.log_step"),
         ):
             zm.FAILED_JOBS.clear()
             zm.process_job("docs", False, 0, "tank", "media")
             assert "docs" in zm.FAILED_JOBS
+            calls = [str(c) for c in mock_err.call_args_list]
+            assert any("[Copy]" in c for c in calls)
 
-    def test_checksum_phase_removed(self):
-        """Test that there is no checksum phase — only copy + ACL."""
+    def test_no_acl_phase(self):
+        """Test that there is no ACL/rsync phase — only rclone move."""
         with (
             patch("zfs_migration.dataset_exists", return_value=False),
             patch("zfs_migration.create_dataset"),
@@ -801,13 +787,8 @@ class TestProcessJob:
                 "zfs_migration.run_rclone_move",
                 return_value=(True, ""),
             ),
-            patch(
-                "zfs_migration.run_transfer_with_progress",
-                return_value=(True, ""),
-            ) as mock_transfer,
             patch("zfs_migration.os.rename"),
             patch("zfs_migration.os.path.exists", return_value=False),
-            patch("shutil.rmtree"),
             patch("zfs_migration.progress.update"),
             patch("zfs_migration.progress.add_task", return_value=0),
             patch("zfs_migration.progress.advance"),
@@ -818,8 +799,6 @@ class TestProcessJob:
         ):
             zm.FAILED_JOBS.clear()
             zm.process_job("docs", False, 0, "tank", "media")
-            # Only 1 call: ACL sync (no checksum phase)
-            assert mock_transfer.call_count == 1
             assert "docs" not in zm.FAILED_JOBS
 
     def test_dataset_exists_creates_nfs_share(self):
@@ -1136,7 +1115,6 @@ class TestRunRcloneMoveFull:
         assert "--fast-list" in cmd
         assert "--no-traverse" in cmd
         assert "--delete-empty-src-dirs" in cmd
-        assert "--size-only" in cmd
 
     @patch("zfs_migration.subprocess.Popen")
     @patch("zfs_migration.progress.update")
@@ -1416,67 +1394,6 @@ class TestCoverageGaps:
             ]
             zm.process_job("docs", False, 0, "tank", "media")
             mock_log_error.assert_not_called()
-
-    def test_temp_dir_cleanup_with_shutil(self):
-        """Test shutil.rmtree cleanup of temp dir."""
-        zm.SHUTTING_DOWN = False
-        zm.FAILED_JOBS.clear()
-
-        with (
-            patch("zfs_migration.dataset_exists", return_value=False),
-            patch("zfs_migration.create_dataset"),
-            patch(
-                "zfs_migration.run_rclone_move",
-                return_value=(True, ""),
-            ),
-            patch(
-                "zfs_migration.run_transfer_with_progress",
-                return_value=(True, ""),
-            ),
-            patch("zfs_migration.progress.update"),
-            patch("zfs_migration.progress.add_task", return_value=0),
-            patch("zfs_migration.progress.advance"),
-            patch("zfs_migration.os.rename"),
-            patch("zfs_migration.os.makedirs"),
-            patch("zfs_migration.os.path.exists", return_value=True),
-            patch("shutil.rmtree") as mock_rmtree,
-            patch("zfs_migration.log_step"),
-            patch("zfs_migration.log_ok"),
-            patch.object(zm, "create_nfs_share"),
-        ):
-            zm.process_job("docs", False, 0, "tank", "media")
-            mock_rmtree.assert_called_once()
-
-    def test_temp_dir_cleanup_oserror(self):
-        """Test that OSError during shutil.rmtree is caught and logged as a warning."""
-        zm.SHUTTING_DOWN = False
-        zm.FAILED_JOBS.clear()
-
-        with (
-            patch("zfs_migration.dataset_exists", return_value=False),
-            patch("zfs_migration.create_dataset"),
-            patch(
-                "zfs_migration.run_rclone_move",
-                return_value=(True, ""),
-            ),
-            patch(
-                "zfs_migration.run_transfer_with_progress",
-                return_value=(True, ""),
-            ),
-            patch("zfs_migration.progress.update"),
-            patch("zfs_migration.progress.add_task", return_value=0),
-            patch("zfs_migration.progress.advance"),
-            patch("zfs_migration.os.rename"),
-            patch("zfs_migration.os.makedirs"),
-            patch("zfs_migration.os.path.exists", return_value=True),
-            patch("shutil.rmtree", side_effect=OSError("permission denied")),
-            patch("zfs_migration.log_step"),
-            patch("zfs_migration.log_ok"),
-            patch("zfs_migration.log_warn") as mock_warn,
-            patch.object(zm, "create_nfs_share"),
-        ):
-            zm.process_job("docs", False, 0, "tank", "media")
-            mock_warn.assert_any_call("Failed to clean up docs-tmp: permission denied")
 
     def test_nfs_share_already_exists_after_migration(self):
         """Test that when NFS share already exists, creation is skipped.
@@ -1764,8 +1681,8 @@ class TestCoverageGaps:
                     assert submitted_jobs[0][0] == "docs"
                     assert submitted_jobs[0][1] is True  # resume=True
 
-    def test_no_checksum_phase(self):
-        """Verify there is no checksum phase — only copy + ACL.
+    def test_no_acl_phase(self):
+        """Verify there is no ACL/rsync phase — only copy + ACL.
 
         The checksum phase was removed because rclone move already verifies
         each file before removing the source, making a separate check
@@ -1780,10 +1697,6 @@ class TestCoverageGaps:
                 "zfs_migration.run_rclone_move",
                 return_value=(True, ""),
             ),
-            patch(
-                "zfs_migration.run_transfer_with_progress",
-                return_value=(True, ""),
-            ) as mock_transfer,
             patch("zfs_migration.progress.update"),
             patch("zfs_migration.progress.add_task", return_value=0),
             patch("zfs_migration.progress.advance"),
@@ -1797,8 +1710,7 @@ class TestCoverageGaps:
             patch.object(zm, "create_nfs_share"),
         ):
             zm.process_job("docs", False, 0, "tank", "media")
-            # Only 1 call (ACL sync) — no checksum phase
-            assert mock_transfer.call_count == 1
+            # Only rclone move is called — no ACL/rsync phase
             assert "docs" not in zm.FAILED_JOBS
             calls = [str(c) for c in mock_err.call_args_list]
             assert not any("[Checksum]" in c for c in calls)
@@ -1861,37 +1773,6 @@ class TestCoverageGaps:
             assert "docs" in zm.FAILED_JOBS
             calls = [str(c) for c in mock_err.call_args_list]
             assert any("[Copy]" in c for c in calls)
-
-    def test_acl_phase_failure_not_shutting_down(self):
-        """Test ACL failure when NOT shutting down logs error."""
-        zm.SHUTTING_DOWN = False
-        zm.FAILED_JOBS.clear()
-
-        # rclone_move is mocked, so run_transfer_with_progress is only called
-        # once — for the ACL phase. Make it fail.
-        with (
-            patch("zfs_migration.dataset_exists", return_value=False),
-            patch("zfs_migration.create_dataset"),
-            patch(
-                "zfs_migration.run_rclone_move",
-                return_value=(True, ""),
-            ),
-            patch(
-                "zfs_migration.run_transfer_with_progress",
-                return_value=(False, "acl error"),
-            ),
-            patch("zfs_migration.progress.update"),
-            patch("zfs_migration.progress.add_task", return_value=0),
-            patch("zfs_migration.progress.advance"),
-            patch("zfs_migration.os.rename"),
-            patch("zfs_migration.log_error") as mock_err,
-            patch("zfs_migration.log_step"),
-        ):
-            zm.process_job("docs", False, 0, "tank", "media")
-            assert "docs" in zm.FAILED_JOBS
-            calls = [str(c) for c in mock_err.call_args_list]
-            acl_errors = [c for c in calls if "[ACL]" in c]
-            assert len(acl_errors) >= 1, f"Expected ACL error, got: {calls}"
 
     def test_successful_all_complete(self):
         """Test 'All complete successfully' message when not shutting down."""
@@ -2081,75 +1962,6 @@ class TestCoverageGaps:
             zm.SHUTTING_DOWN = False
             zm.process_job("docs", False, 0, "tank", "media")
 
-    def test_acl_failure_branch(self):
-        """Hit both directions of branch: ACL phase failure.
-
-        Toggle SHUTTING_DOWN via progress.update side_effect after the second
-        transfer call returns."""
-        zm.FAILED_JOBS.clear()
-        zm.ACTIVE_PROCESSES.clear()
-
-        update_count = [0]
-
-        def toggle_on_second_update(*a, **kw):
-            update_count[0] += 1
-            if update_count[0] == 2:
-                zm.SHUTTING_DOWN = True
-
-        side_effect = self._make_popen_side_effect(
-            [
-                ([""], 0),  # Phase 1 copy OK
-                (["rclone error"], 1),  # Phase 2 ACL fails
-            ]
-        )
-
-        with (
-            patch("zfs_migration.subprocess.Popen", side_effect=side_effect),
-            patch("zfs_migration.progress.update", side_effect=toggle_on_second_update),
-            patch("zfs_migration.progress.add_task", return_value=0),
-            patch("zfs_migration.progress.advance"),
-            patch("zfs_migration.os.rename"),
-            patch("zfs_migration.log_error"),
-            patch("zfs_migration.log_step"),
-        ):
-            zm.SHUTTING_DOWN = False
-            zm.process_job("docs", False, 0, "tank", "media")
-
-    def test_checksum_failure_branch(self):
-        """Hit both directions of branch: checksum failure.
-
-        Toggle SHUTTING_DOWN via progress.update side_effect after the third
-        transfer call (checksum verify) returns."""
-        zm.FAILED_JOBS.clear()
-        zm.ACTIVE_PROCESSES.clear()
-
-        update_count = [0]
-
-        def toggle_on_third_update(*a, **kw):
-            update_count[0] += 1
-            if update_count[0] == 3:
-                zm.SHUTTING_DOWN = True
-
-        side_effect = self._make_popen_side_effect(
-            [
-                ([""], 0),  # Phase 1 OK
-                ([""], 0),  # Phase 2 OK
-                (["error"], 1),  # Phase 3 checksum fails
-            ]
-        )
-
-        with (
-            patch("zfs_migration.subprocess.Popen", side_effect=side_effect),
-            patch("zfs_migration.progress.update", side_effect=toggle_on_third_update),
-            patch("zfs_migration.progress.add_task", return_value=0),
-            patch("zfs_migration.progress.advance"),
-            patch("zfs_migration.os.rename"),
-            patch("zfs_migration.log_error"),
-            patch("zfs_migration.log_step"),
-        ):
-            zm.SHUTTING_DOWN = False
-            zm.process_job("docs", False, 0, "tank", "media")
-
     def test_main_entry_point(self):
         """Hit line: if __name__ == '__main__' guard.
 
@@ -2218,9 +2030,9 @@ class TestCoverageGaps:
             zm.run_rclone_move("src", "dst", 0, "job")
             # Verify command was built with default performance flags
             cmd = mock_transfer.call_args[0][0]
-            assert "--transfers=4" in cmd
-            assert "--checkers=2" in cmd
-            assert "--buffer-size=2048M" in cmd
+            assert "--transfers=32" in cmd
+            assert "--checkers=16" in cmd
+            assert "--buffer-size=512M" in cmd
 
     def test_rclone_move_custom_config(self):
         """Hit the config-is-provided branch in run_rclone_move."""
@@ -2468,54 +2280,6 @@ class TestProcessJobStateMatrix:
             patch("zfs_migration.dataset_exists", return_value=False),
             patch("zfs_migration.create_dataset"),
             patch("zfs_migration.run_rclone_move", return_value=(False, "disk full")),
-            patch("zfs_migration.progress.update"),
-            patch("zfs_migration.progress.add_task", return_value=0),
-            patch("zfs_migration.os.rename"),
-            patch("zfs_migration.log_error"),
-            patch("zfs_migration.log_step"),
-            patch("zfs_migration.nfs_share_exists") as mock_nfs_exists,
-            patch("zfs_migration.create_nfs_share") as mock_nfs_create,
-        ):
-            zm.FAILED_JOBS.clear()
-            zm.process_job("docs", False, 0, "tank", "media")
-            mock_nfs_exists.assert_not_called()
-            mock_nfs_create.assert_not_called()
-            assert "docs" in zm.FAILED_JOBS
-
-    def test_acl_fail_no_nfs_attempted(self):
-        """ACL sync fails → NFS share must not be attempted."""
-        with (
-            patch("zfs_migration.dataset_exists", return_value=False),
-            patch("zfs_migration.create_dataset"),
-            patch("zfs_migration.run_rclone_move", return_value=(True, "")),
-            patch(
-                "zfs_migration.run_transfer_with_progress",
-                return_value=(False, "perm error"),
-            ),
-            patch("zfs_migration.progress.update"),
-            patch("zfs_migration.progress.add_task", return_value=0),
-            patch("zfs_migration.os.rename"),
-            patch("zfs_migration.log_error"),
-            patch("zfs_migration.log_step"),
-            patch("zfs_migration.nfs_share_exists") as mock_nfs_exists,
-            patch("zfs_migration.create_nfs_share") as mock_nfs_create,
-        ):
-            zm.FAILED_JOBS.clear()
-            zm.process_job("docs", False, 0, "tank", "media")
-            mock_nfs_exists.assert_not_called()
-            mock_nfs_create.assert_not_called()
-            assert "docs" in zm.FAILED_JOBS
-
-    def test_checksum_phase_removed_no_nfs_on_acl_fail(self):
-        """Checksum phase removed — ACL fails → NFS share must not be attempted."""
-        with (
-            patch("zfs_migration.dataset_exists", return_value=False),
-            patch("zfs_migration.create_dataset"),
-            patch("zfs_migration.run_rclone_move", return_value=(True, "")),
-            patch(
-                "zfs_migration.run_transfer_with_progress",
-                return_value=(False, "mismatch"),
-            ),
             patch("zfs_migration.progress.update"),
             patch("zfs_migration.progress.add_task", return_value=0),
             patch("zfs_migration.os.rename"),

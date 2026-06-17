@@ -45,11 +45,11 @@ FAILED_JOBS: "list[str]" = []
 class RcloneConfig:
     """Configuration for rclone transfer performance."""
 
-    transfers: int = 4
-    checkers: int = 2
-    buffer_size: str = "2048M"
-    multi_thread_streams: int = 16
-    multi_thread_cutoff: str = "16M"
+    transfers: int = 32
+    checkers: int = 16
+    buffer_size: str = "512M"
+    multi_thread_streams: int = 8
+    multi_thread_cutoff: str = "4G"
 
 
 # rclone progress output regex
@@ -393,10 +393,11 @@ def run_rclone_move(
     job_name: str,
     config: RcloneConfig | None = None,
 ) -> tuple[bool, str]:
-    """Copy data from src to dest with checksum verification, removing verified source files.
+    """Move data from src to dest with checksum verification, removing source files.
 
-    Uses rclone move --checksum so each file is verified before being deleted
-    from the temp directory. This avoids the 2x disk space requirement of a
+    Uses rclone move so each file is verified before being deleted
+    from the temp directory. Source directories are cleaned up automatically
+    (--delete-empty-src-dirs). This avoids the 2x disk space requirement of a
     full copy-then-verify approach.
     """
     if config is None:
@@ -420,7 +421,6 @@ def run_rclone_move(
         "--multi-thread-cutoff=" + config.multi_thread_cutoff,
         "--no-traverse",
         "--delete-empty-src-dirs",
-        "--size-only",
     ]
     return run_transfer_with_progress(
         cmd, task_id, job_name, "Copying+Verifying", "blue"
@@ -504,67 +504,32 @@ def process_job(
         )
         return
 
-    # PHASE 2: [ACL] Sync remaining ACL/xattr metadata.
-    # After Phase 1 the temp_dir may still contain directories (removed last)
-    # or files that failed checksum; rsync --remove-source-files handles this.
-    log_step(f"[ACL] Syncing permissions for: {job_name}")
-    sync_cmd = [
-        "rsync",
-        "-aHAX",
-        "--inplace",
-        "--numeric-ids",
-        "--info=progress2",
-        f"{temp_dir}/",
-        f"{target_dir}/",
-    ]
-    success, err = run_transfer_with_progress(
-        sync_cmd, task_id, job_name, "Syncing ACLs", "magenta"
+    # rclone move already deleted all source files from temp_dir
+    # (verified before each deletion). No cleanup needed.
+    progress.update(
+        task_id,
+        description=f"[green]{job_name} [white](Done)",
+        completed=100,
+        transferred="",
+        speed="",
+        total=100,
     )
-    if not success:
-        if not SHUTTING_DOWN:
-            log_error(f"[ACL] Sync failed for {job_name}.\nReason: {err}")
-            FAILED_JOBS.append(job_name)
-        progress.update(
-            task_id,
-            description=f"[red]{job_name} [white](Failed)",
-            visible=True,
+    log_ok(f"{'Resume ' if is_resume else ''}Complete: {job_name}")
+
+    # PHASE 4: [NFS] Create NFS share via midclt (local TrueNAS CLI)
+    nfs_ok = True  # Assume success — only False if creation fails
+    if not nfs_share_exists(nfs_path):
+        log_step(f"[NFS] Creating share for: {nfs_path}")
+        nfs_ok = create_nfs_share(
+            path=nfs_path,
+            comment=f"Migration share: {job_name}",
         )
-        return
-
-    # Clean up any remaining temp directories/files
-    if os.path.exists(temp_dir):
-        log_step(f"Cleaning up temporary directory: {temp_dir}")
-        try:
-            import shutil
-
-            shutil.rmtree(temp_dir)
-            log_ok(f"Cleaned up: {temp_dir}")
-        except OSError as e:
-            log_warn(f"Failed to clean up {temp_dir}: {e}")
-        progress.update(
-            task_id,
-            description=f"[green]{job_name} [white](Done)",
-            completed=100,
-            transferred="",
-            speed="",
-            total=100,
-        )
-        log_ok(f"{'Resume ' if is_resume else ''}Complete: {job_name}")
-
-        # PHASE 4: [NFS] Create NFS share via midclt (local TrueNAS CLI)
-        nfs_ok = True  # Assume success — only False if creation fails
-        if not nfs_share_exists(nfs_path):
-            log_step(f"[NFS] Creating share for: {nfs_path}")
-            nfs_ok = create_nfs_share(
-                path=nfs_path,
-                comment=f"Migration share: {job_name}",
-            )
-        else:
-            log_ok(f"[NFS] Share already exists: {nfs_path}")
-        if nfs_ok:
-            log_ok(f"[NFS] Share created: {nfs_path}")
-        else:
-            log_warn(f"[NFS] Failed to create share for: {nfs_path}")
+    else:
+        log_ok(f"[NFS] Share already exists: {nfs_path}")
+    if nfs_ok:
+        log_ok(f"[NFS] Share created: {nfs_path}")
+    else:
+        log_warn(f"[NFS] Failed to create share for: {nfs_path}")
 
     progress.advance(global_task)
 
@@ -598,20 +563,20 @@ def main() -> None:
     parser.add_argument(
         "--transfers",
         type=int,
-        default=4,
-        help="rclone concurrent file transfers per job (default: 4)",
+        default=32,
+        help="rclone concurrent file transfers per job (default: 32)",
     )
     parser.add_argument(
         "--checkers",
         type=int,
-        default=2,
-        help="rclone file checker threads per job (default: 2)",
+        default=16,
+        help="rclone file checker threads per job (default: 16)",
     )
     parser.add_argument(
         "--buffer-size",
         type=str,
-        default="2048M",
-        help="rclone in-memory buffer size per file (default: 2048M)",
+        default="512M",
+        help="rclone in-memory buffer size per file (default: 512M)",
     )
 
     args = parser.parse_args()
