@@ -459,6 +459,7 @@ def process_job(
 ) -> None:
     """Process a single migration job (copy, verify, create NFS share)."""
     if rclone_config is None:
+        log_info(f"Using default rclone config for {job_name}")
         rclone_config = RcloneConfig()
     if SHUTTING_DOWN:
         log_warn(f"Skipping {job_name}: shutting down")
@@ -509,6 +510,7 @@ def process_job(
     # PHASE 1: [Copy] Incremental copy with checksum verification.
     # Source files are removed after successful verification, keeping disk
     # usage bounded throughout the transfer.
+    retried = False
     success, err = run_rclone_move(
         temp_dir, target_dir, task_id, job_name, rclone_config
     )
@@ -520,6 +522,7 @@ def process_job(
         rclone_config.multi_thread_streams = 1
         rclone_config.transfers = min(rclone_config.transfers, 4)
         time.sleep(2)
+        retried = True
         success, err = run_rclone_move(
             temp_dir, target_dir, task_id, job_name, rclone_config
         )
@@ -544,7 +547,8 @@ def process_job(
         speed="",
         total=100,
     )
-    log_ok(f"{'Resume ' if is_resume else ''}Complete: {job_name}")
+    retry_note = " (after stall recovery)" if retried else ""
+    log_ok(f"{'Resume ' if is_resume else ''}Complete:{retry_note} {job_name}")
 
     # PHASE 4: [NFS] Create NFS share via midclt (local TrueNAS CLI)
     nfs_ok = True  # Assume success — only False if creation fails
@@ -612,16 +616,23 @@ def main() -> None:
     args = parser.parse_args()
 
     rotational = is_rotational_disk(args.path)
+    effective_streams = 1 if rotational else RcloneConfig.multi_thread_streams
     if rotational:
         log_info(
             "Detected HDD pool — reducing multi-thread-streams to 1 "
             "(prevents head thrashing on spinning disks)"
         )
+    else:
+        log_info(
+            f"Using default rclone config: transfers={args.transfers}, "
+            f"checkers={args.checkers}, buffer={args.buffer_size}, "
+            f"multi-thread-streams={effective_streams}"
+        )
     rclone_config = RcloneConfig(
         transfers=args.transfers,
         checkers=args.checkers,
         buffer_size=args.buffer_size,
-        multi_thread_streams=(1 if rotational else RcloneConfig.multi_thread_streams),
+        multi_thread_streams=effective_streams,
     )
 
     target_path = Path(args.path)
