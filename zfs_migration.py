@@ -631,44 +631,55 @@ def main() -> None:
     # Avoids OOM kernel panics on systems with limited RAM or other services.
     avail_gb = get_available_ram_gb()
     rotational = is_rotational_disk(args.path)
-    effective_streams = 1 if rotational else RcloneConfig.multi_thread_streams
-    effective_buffer = args.buffer_size
 
-    if rotational:
+    workers = args.workers
+    transfers = args.transfers
+    checkers = args.checkers
+    effective_buffer = args.buffer_size
+    effective_streams = RcloneConfig.multi_thread_streams
+
+    # Cap all concurrency based on available memory.
+    # rclone allocates RAM per-concurrent-transfer for file handles,
+    # metadata caches, and internal buffers — not just buffer size.
+    # With 4 workers × 32 transfers = 128 simultaneous transfers,
+    # each consuming ~2-5MB, that's 256-640MB per job just in transfer
+    # state. On a system with ~27GB available plus ZFS ARC, this is OOM.
+    if avail_gb < 16:
+        workers = min(workers, 1)
+        transfers = min(transfers, 4)
+        checkers = min(checkers, 4)
+        effective_buffer = "32M"
+        log_info(
+            f"Low memory ({avail_gb:.1f}GB), capping: workers=1, "
+            f"transfers={transfers}, checkers={checkers}, buffer={effective_buffer}"
+        )
+    elif avail_gb < 32:
+        workers = min(workers, 2)
+        transfers = min(transfers, 8)
+        checkers = min(checkers, 4)
+        if effective_buffer not in ("32M", "64M"):
+            effective_buffer = "64M"
+        log_info(
+            f"Memory-constrained ({avail_gb:.1f}GB), capping: workers={workers}, "
+            f"transfers={transfers}, checkers={checkers}, buffer={effective_buffer}"
+        )
+    elif rotational:
+        effective_streams = 1
         log_info(
             "Detected HDD pool — reducing multi-thread-streams to 1 "
             "(prevents head thrashing on spinning disks)"
         )
 
-    # Cap buffer size to avoid OOM: each transfer reserves this much in RAM.
-    # Formula: max_buffer = (avail_gb × 0.4) / (workers × transfers)
-    # This reserves ~40% of available RAM for rclone buffers across all jobs.
-    workers = args.workers
-    if avail_gb < 16:
-        effective_buffer = "32M"
-        log_info(
-            f"Low memory ({avail_gb:.1f}GB available), "
-            f"reducing buffer to {effective_buffer}"
-        )
-    elif avail_gb < 32:
-        # Reserve enough for 4 concurrent transfers at this buffer size
-        max_per_transfer = (avail_gb * 0.4) / workers
-        if float(max_per_transfer) < 128:
-            effective_buffer = "64M"
-            log_info(
-                f"Memory-constrained ({avail_gb:.1f}GB available), "
-                f"reducing buffer to {effective_buffer}"
-            )
-
     log_info(
-        f"Rclone config: transfers={args.transfers}, checkers={args.checkers}, "
-        f"buffer={effective_buffer}, streams={effective_streams}, "
-        f"workers={workers}, available_ram={avail_gb:.1f}GB"
+        f"Rclone config: workers={workers}, transfers={transfers}, "
+        f"checkers={checkers}, buffer={effective_buffer}, "
+        f"multi-thread-streams={effective_streams}, "
+        f"available_ram={avail_gb:.1f}GB"
     )
 
     rclone_config = RcloneConfig(
-        transfers=args.transfers,
-        checkers=args.checkers,
+        transfers=transfers,
+        checkers=checkers,
         buffer_size=effective_buffer,
         multi_thread_streams=effective_streams,
     )
@@ -715,7 +726,7 @@ def main() -> None:
     log_info(f"tmp jobs (priority): {len(temporary_jobs)}")
     log_info(f"normal jobs: {len(filtered_normal_jobs)}")
     log_info(f"total jobs: {total_jobs}")
-    log_info(f"directory workers: {args.workers}")
+    log_info(f"directory workers: {workers} (was {args.workers}, capped for memory safety)")
 
     if total_jobs == 0:
         log_ok("Nothing to do.")
@@ -730,7 +741,7 @@ def main() -> None:
         )
 
         if not SHUTTING_DOWN:
-            with ThreadPoolExecutor(max_workers=args.workers) as executor:
+            with ThreadPoolExecutor(max_workers=workers) as executor:
                 futures: dict[str, object] = {}  # value is concurrent.futures.Future
 
                 for job in temporary_jobs:
