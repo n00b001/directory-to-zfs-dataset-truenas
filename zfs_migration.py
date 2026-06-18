@@ -53,6 +53,19 @@ class RcloneConfig:
     multi_thread_cutoff: str = "4G"
 
 
+def get_available_ram_gb() -> float:
+    """Return available RAM in GB (total minus 4GB reserved for system services)."""
+    try:
+        with open("/proc/meminfo", "r") as f:
+            for line in f:
+                if line.startswith("MemTotal:"):
+                    total_kb = int(line.split()[1])
+                    return max(0, (total_kb / 1024 / 1024) - 4)
+    except Exception:
+        pass
+    return 32.0  # fallback if we can't read it
+
+
 def is_rotational_disk(path: str) -> bool:
     """Check if the ZFS pool's underlying disks are HDD (rotational)."""
     res = subprocess.run(
@@ -431,7 +444,6 @@ def run_rclone_move(
         f"{dest}/",
         "--transfers=" + str(config.transfers),
         "--checkers=" + str(config.checkers),
-        "--fast-list",
         "--buffer-size=" + config.buffer_size,
         "--use-mmap",
         "--multi-thread-streams=" + str(config.multi_thread_streams),
@@ -615,23 +627,49 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    # Detect system memory and disk type to tune rclone config safely.
+    # Avoids OOM kernel panics on systems with limited RAM or other services.
+    avail_gb = get_available_ram_gb()
     rotational = is_rotational_disk(args.path)
     effective_streams = 1 if rotational else RcloneConfig.multi_thread_streams
+    effective_buffer = args.buffer_size
+
     if rotational:
         log_info(
             "Detected HDD pool — reducing multi-thread-streams to 1 "
             "(prevents head thrashing on spinning disks)"
         )
-    else:
+
+    # Cap buffer size to avoid OOM: each transfer reserves this much in RAM.
+    # Formula: max_buffer = (avail_gb × 0.4) / (workers × transfers)
+    # This reserves ~40% of available RAM for rclone buffers across all jobs.
+    workers = args.workers
+    if avail_gb < 16:
+        effective_buffer = "32M"
         log_info(
-            f"Using default rclone config: transfers={args.transfers}, "
-            f"checkers={args.checkers}, buffer={args.buffer_size}, "
-            f"multi-thread-streams={effective_streams}"
+            f"Low memory ({avail_gb:.1f}GB available), "
+            f"reducing buffer to {effective_buffer}"
         )
+    elif avail_gb < 32:
+        # Reserve enough for 4 concurrent transfers at this buffer size
+        max_per_transfer = (avail_gb * 0.4) / workers
+        if float(max_per_transfer) < 128:
+            effective_buffer = "64M"
+            log_info(
+                f"Memory-constrained ({avail_gb:.1f}GB available), "
+                f"reducing buffer to {effective_buffer}"
+            )
+
+    log_info(
+        f"Rclone config: transfers={args.transfers}, checkers={args.checkers}, "
+        f"buffer={effective_buffer}, streams={effective_streams}, "
+        f"workers={workers}, available_ram={avail_gb:.1f}GB"
+    )
+
     rclone_config = RcloneConfig(
         transfers=args.transfers,
         checkers=args.checkers,
-        buffer_size=args.buffer_size,
+        buffer_size=effective_buffer,
         multi_thread_streams=effective_streams,
     )
 

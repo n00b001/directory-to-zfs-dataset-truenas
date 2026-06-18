@@ -619,7 +619,7 @@ class TestRunRcloneMove:
         assert "rclone" in cmd
         assert "move" in cmd
         assert "-P" in cmd
-        assert "--fast-list" in cmd
+        assert "--fast-list" not in cmd
         assert "--no-traverse" in cmd
         assert "--delete-empty-src-dirs" in cmd
         # Performance flags
@@ -1163,7 +1163,7 @@ class TestRunRcloneMoveFull:
         assert "rclone" in cmd
         assert "move" in cmd
         assert "-P" in cmd
-        assert "--fast-list" in cmd
+        assert "--fast-list" not in cmd
         assert "--no-traverse" in cmd
         assert "--delete-empty-src-dirs" in cmd
 
