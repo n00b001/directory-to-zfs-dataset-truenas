@@ -37,21 +37,20 @@ class TestWriteLog:
         zm.LOG_FILE = log_file
         mock_live = MagicMock()
         mock_live.is_started = True
-        mock_console = MagicMock()
         with patch.object(zm, "progress") as mock_progress:
             mock_progress.live = mock_live
-            mock_progress.console = mock_console
-            zm.write_log("ERROR", "red", "error msg")
-            mock_console.print.assert_called_once()
-            assert "error msg" in str(mock_console.print.call_args)
+            with patch.object(zm, "log_console") as mock_log_console:
+                zm.write_log("ERROR", "red", "error msg")
+                mock_log_console.print.assert_called_once()
+                assert "error msg" in str(mock_log_console.print.call_args)
 
     def test_write_log_without_active_progress(self, log_file):
         zm.LOG_FILE = log_file
         with patch.object(zm, "progress") as mock_progress:
             mock_progress.live = None
-            with patch.object(zm, "console") as mock_console:
+            with patch.object(zm, "log_console") as mock_log_console:
                 zm.write_log("WARN", "yellow", "warn msg")
-                mock_console.print.assert_called_once()
+                mock_log_console.print.assert_called_once()
 
     def test_log_info(self, log_file):
         zm.LOG_FILE = log_file
@@ -470,8 +469,10 @@ class FakePopen:
             b"\n" if self.output_lines else b""
         )
         self._pos = 0
+        self._line_pos = 0
         self.stdout = MagicMock()
         self.stdout.read.side_effect = self._read_byte
+        self.stdout.readline.side_effect = self._read_line
 
     def _read_byte(self, size):
         if self._pos >= len(self._data):
@@ -479,6 +480,21 @@ class FakePopen:
         byte = self._data[self._pos : self._pos + 1]
         self._pos += 1
         return byte
+
+    def _read_line(self):
+        """Return one line (up to and including the next newline) of data."""
+        if self._line_pos >= len(self._data):
+            return b""
+        end = self._data.find(b"\n", self._line_pos)
+        if end == -1:
+            # No more newlines — return the rest
+            line = self._data[self._line_pos :]
+            self._line_pos = len(self._data)
+        else:
+            # Include the newline character
+            line = self._data[self._line_pos : end + 1]
+            self._line_pos = end + 1
+        return line
 
     def wait(self):
         if self._on_wait:
@@ -827,7 +843,7 @@ class TestProcessJob:
             zm.process_job("docs", False, 0, "tank", "media")
             assert "docs" in zm.FAILED_JOBS
             calls = [str(c) for c in mock_err.call_args_list]
-            assert any("[Copy]" in c for c in calls)
+            assert any("[Move]" in c for c in calls)
 
     def test_no_acl_phase(self):
         """Test that there is no ACL/rsync phase — only rclone move."""
@@ -1823,7 +1839,7 @@ class TestCoverageGaps:
             zm.process_job("docs", False, 0, "tank", "media")
             assert "docs" in zm.FAILED_JOBS
             calls = [str(c) for c in mock_err.call_args_list]
-            assert any("[Copy]" in c for c in calls)
+            assert any("[Move]" in c for c in calls)
 
     def test_successful_all_complete(self):
         """Test 'All complete successfully' message when not shutting down."""

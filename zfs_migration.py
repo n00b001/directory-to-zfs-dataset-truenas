@@ -92,11 +92,16 @@ def is_rotational_disk(path: str) -> bool:
 # rclone progress output regex
 # Matches: Transferred:    1.234 GiB / 10.000 GiB, 12.3%, 100.0 MiB/s, ETA 0m30s
 rclone_progress_re = re.compile(
-    r"Transferred:\s+([\d.,]+\s+[A-Za-z]+)\s*/\s*[\d.,]+\s*[A-Za-z]+,\s*"
+    r"Transferred:\s+([\d.,]+\s+[A-Za-z]+)\s*/\s+([\d.,]+\s+[A-Za-z]+),\s*"
     r"(\d+(?:\.\d+)?)%,\s*([\d.,]+\s+[A-Za-z]+/s)"
 )
 
 console = Console()
+
+# Dedicated console for log messages — must NOT share the Rich progress
+# console, otherwise interleaved print() calls corrupt the ANSI rendering
+# buffer and TimeRemainingColumn cannot compute/display ETA.
+log_console = Console(force_terminal=True)
 
 progress = Progress(
     SpinnerColumn(),
@@ -129,9 +134,11 @@ def write_log(level: str, color: str, message: str) -> None:
         f"[[{color}]{level}[/{color}]] {message}"
     )
     if progress and progress.live and progress.live.is_started:
-        progress.console.print(formatted_msg)
-    else:
-        console.print(formatted_msg)
+        # Flush the progress buffer first so Rich finishes its current
+        # render cycle before we inject a raw log line.  This prevents
+        # interleaved ANSI sequences from corrupting the ETA display.
+        progress.refresh()
+    log_console.print(formatted_msg)
 
 
 def log_info(msg: str) -> None:
@@ -363,6 +370,16 @@ def nfs_share_exists(path: str) -> bool:
 _rsync_progress_re = re.compile(r"([\d.,]+[a-zA-Z]*)\s+(\d+)%\s+([\d.,]+[a-zA-Z]*/s)")
 
 
+def _strip_commas(value: str) -> str:
+    """Remove thousands-separator commas from a numeric string.
+
+    rclone may output numbers like ``1,234.5`` or ``10,240`` depending
+    on locale / version.  ``float("1,234.5")`` raises ValueError so we
+    strip commas first.
+    """
+    return value.replace(",", "")
+
+
 def run_transfer_with_progress(
     cmd: list[str],
     task_id: int,
@@ -375,9 +392,13 @@ def run_transfer_with_progress(
     Captures progress output and updates the Rich progress bar.
     On failure returns (False, error_message). On success returns (True, "").
     """
-    p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    p = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,  # line-buffered — much faster than read(1)
+    )
     ACTIVE_PROCESSES.append(p)
-    buffer = bytearray()
 
     error_tail = deque(maxlen=20)
     file_count = 0
@@ -386,52 +407,60 @@ def run_transfer_with_progress(
         task_id,
         description=f"[cyan]{job_name} [{phase_color}]({phase_desc})",
         completed=0.1,  # Start slightly above 0 so Rich's TimeRemainingColumn can compute ETA
+        total=100.0,
         transferred="0 B",
         speed="0 B/s",
     )
 
     while True:
-        char = p.stdout.read(1)
-        if not char:
+        line_raw = p.stdout.readline()
+        if not line_raw:
             break
 
-        if char in (b"\r", b"\n"):
-            line = buffer.decode("utf-8", errors="replace").strip()
-            if line:
-                # Try rclone progress format first, then rsync
-                rclone_match = rclone_progress_re.search(line)
-                rsync_match = _rsync_progress_re.search(line)
+        line = line_raw.decode("utf-8", errors="replace").strip()
+        if not line:
+            continue
 
-                if rclone_match:
-                    progress.update(
-                        task_id,
-                        description=(f"[cyan]{job_name} [{phase_color}]({phase_desc})"),
-                        completed=float(rclone_match.group(2)),
-                        transferred=rclone_match.group(1),
-                        speed=rclone_match.group(3) or "0 B/s",
-                    )
-                elif rsync_match:
-                    progress.update(
-                        task_id,
-                        description=(f"[cyan]{job_name} [{phase_color}]({phase_desc})"),
-                        completed=float(rsync_match.group(2)),
-                        transferred=rsync_match.group(1),
-                        speed=rsync_match.group(3) or "0 B/s",
-                    )
-                else:
-                    file_count += 1
-                    if file_count % 1000 == 0:
-                        progress.update(
-                            task_id,
-                            description=(
-                                f"[cyan]{job_name} [{phase_color}]({phase_desc}...)"
-                            ),
-                        )
+        # Try rclone progress format first, then rsync
+        rclone_match = rclone_progress_re.search(line)
+        rsync_match = _rsync_progress_re.search(line)
 
-                    error_tail.append(line)
-            buffer.clear()
+        if rclone_match:
+            try:
+                pct = float(_strip_commas(rclone_match.group(3)))
+                progress.update(
+                    task_id,
+                    description=(f"[cyan]{job_name} [{phase_color}]({phase_desc})"),
+                    completed=pct,
+                    total=100.0,
+                    transferred=rclone_match.group(1),
+                    speed=rclone_match.group(4) or "0 B/s",
+                )
+            except ValueError:
+                pass  # malformed progress line — skip silently
+        elif rsync_match:
+            try:
+                pct = float(_strip_commas(rsync_match.group(2)))
+                progress.update(
+                    task_id,
+                    description=(f"[cyan]{job_name} [{phase_color}]({phase_desc})"),
+                    completed=pct,
+                    total=100.0,
+                    transferred=rsync_match.group(1),
+                    speed=rsync_match.group(3) or "0 B/s",
+                )
+            except ValueError:
+                pass  # malformed progress line — skip silently
         else:
-            buffer.extend(char)
+            file_count += 1
+            if file_count % 1000 == 0:
+                progress.update(
+                    task_id,
+                    description=(f"[cyan]{job_name} [{phase_color}]({phase_desc}...)"),
+                    total=100.0,
+                )
+
+            error_tail.append(line)
 
     p.wait()
     if p in ACTIVE_PROCESSES:
@@ -472,7 +501,7 @@ def run_rclone_move(
     if config is None:
         config = RcloneConfig()
 
-    log_step(f"[Copy] Starting rclone transfer for: {job_name}")
+    log_step(f"[Move] Starting rclone transfer for: {job_name}")
     progress.update(task_id, description=f"[cyan]{job_name} [yellow](Checking...)")
 
     cmd = [
@@ -491,7 +520,7 @@ def run_rclone_move(
         "--delete-empty-src-dirs",
     ]
     return run_transfer_with_progress(
-        cmd, task_id, job_name, "Copying+Verifying", "blue"
+        cmd, task_id, job_name, "Moving+Verifying", "blue"
     )
 
 
@@ -577,7 +606,7 @@ def process_job(
         f"[cyan]{job_name}", total=100, transferred="0 B", speed="0 B/s"
     )
 
-    # PHASE 1: [Copy] Incremental copy with size+mtime verification.
+    # PHASE 1: [Move] Incremental move with size+mtime verification.
     # Source files are removed after successful verification, keeping disk
     # usage bounded throughout the transfer.
     retried = False
@@ -586,7 +615,7 @@ def process_job(
     )
     if not success and "0%" in err:
         log_warn(
-            f"[Copy] Transfer stalled, retrying with reduced concurrency "
+            f"[Move] Transfer stalled, retrying with reduced concurrency "
             f"(transfers={min(rclone_config.transfers, 4)}, streams=1)"
         )
         rclone_config.multi_thread_streams = 1
@@ -598,7 +627,7 @@ def process_job(
         )
     if not success:
         if not SHUTTING_DOWN:
-            log_error(f"[Copy] Failed for {job_name}.\nReason: {err}")
+            log_error(f"[Move] Failed for {job_name}.\nReason: {err}")
             FAILED_JOBS.append(job_name)
         progress.update(
             task_id,
@@ -786,7 +815,9 @@ def main() -> None:
     log_info(f"tmp jobs (priority): {len(temporary_jobs)}")
     log_info(f"normal jobs: {len(filtered_normal_jobs)}")
     log_info(f"total jobs: {total_jobs}")
-    log_info(f"directory workers: {workers} (was {args.workers}, capped for memory safety)")
+    log_info(
+        f"directory workers: {workers} (was {args.workers}, capped for memory safety)"
+    )
 
     if total_jobs == 0:
         log_ok("Nothing to do.")
