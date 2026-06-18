@@ -623,11 +623,11 @@ class TestRunRcloneMove:
         assert "--no-traverse" in cmd
         assert "--delete-empty-src-dirs" in cmd
         # Performance flags
-        assert "--transfers=32" in cmd
-        assert "--checkers=16" in cmd
-        assert "--buffer-size=512M" in cmd
+        assert "--transfers=64" in cmd
+        assert "--checkers=32" in cmd
+        assert "--buffer-size=1024M" in cmd
         assert "--use-mmap" in cmd
-        assert "--multi-thread-streams=8" in cmd
+        assert "--multi-thread-streams=16" in cmd
         assert "--multi-thread-cutoff=4G" in cmd
 
 
@@ -2030,9 +2030,9 @@ class TestCoverageGaps:
             zm.run_rclone_move("src", "dst", 0, "job")
             # Verify command was built with default performance flags
             cmd = mock_transfer.call_args[0][0]
-            assert "--transfers=32" in cmd
-            assert "--checkers=16" in cmd
-            assert "--buffer-size=512M" in cmd
+            assert "--transfers=64" in cmd
+            assert "--checkers=32" in cmd
+            assert "--buffer-size=1024M" in cmd
 
     def test_rclone_move_custom_config(self):
         """Hit the config-is-provided branch in run_rclone_move."""

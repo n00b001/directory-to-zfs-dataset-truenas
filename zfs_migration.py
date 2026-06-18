@@ -45,10 +45,10 @@ FAILED_JOBS: "list[str]" = []
 class RcloneConfig:
     """Configuration for rclone transfer performance."""
 
-    transfers: int = 32
-    checkers: int = 16
-    buffer_size: str = "512M"
-    multi_thread_streams: int = 8
+    transfers: int = 64
+    checkers: int = 32
+    buffer_size: str = "1024M"
+    multi_thread_streams: int = 16
     multi_thread_cutoff: str = "4G"
 
 
