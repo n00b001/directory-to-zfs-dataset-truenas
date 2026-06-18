@@ -756,6 +756,57 @@ class TestProcessJob:
             zm.process_job("docs", False, 0, "tank", "media")
             assert "docs" in zm.FAILED_JOBS
 
+    def test_copy_stall_retry_then_succeed(self):
+        """Test stall retry: first call returns 0% error, second succeeds."""
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                side_effect=[
+                    (False, "Transfer failed:\n* file.mp4:  0% /2.0Gi, 0/s"),
+                    (True, ""),
+                ],
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_warn") as mock_warn,
+            patch("zfs_migration.log_ok"),
+            patch("zfs_migration.create_nfs_share"),
+        ):
+            zm.FAILED_JOBS.clear()
+            zm.process_job("media", False, 0, "tank", "share")
+            assert "media" not in zm.FAILED_JOBS
+            # Verify retry was logged
+            calls = [str(c) for c in mock_warn.call_args_list]
+            assert any("stalled" in c.lower() for c in calls)
+
+    def test_copy_stall_retry_then_fail(self):
+        """Test stall retry: first call returns 0% error, second also fails."""
+        with (
+            patch("zfs_migration.dataset_exists", return_value=False),
+            patch("zfs_migration.create_dataset"),
+            patch(
+                "zfs_migration.run_rclone_move",
+                side_effect=[
+                    (False, "Transfer failed:\n* file.mp4:  0% /2.0Gi, 0/s"),
+                    (False, "disk full"),
+                ],
+            ),
+            patch("zfs_migration.progress.update"),
+            patch("zfs_migration.progress.add_task", return_value=0),
+            patch("zfs_migration.progress.advance"),
+            patch("zfs_migration.os.rename"),
+            patch("zfs_migration.log_error"),
+            patch("zfs_migration.log_warn"),
+            patch("zfs_migration.log_step"),
+        ):
+            zm.FAILED_JOBS.clear()
+            zm.process_job("media", False, 0, "tank", "share")
+            assert "media" in zm.FAILED_JOBS
+
     def test_copy_phase_failure_permission_denied(self):
         """Test failure during copy phase with permission denied."""
         with (

@@ -10,6 +10,7 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -50,6 +51,22 @@ class RcloneConfig:
     buffer_size: str = "1024M"
     multi_thread_streams: int = 16
     multi_thread_cutoff: str = "4G"
+
+
+def is_rotational_disk(path: str) -> bool:
+    """Check if the ZFS pool's underlying disks are HDD (rotational)."""
+    res = subprocess.run(
+        ["lsblk", "--dms", "-o", "NAME,ROTA"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+    )
+    for line in res.stdout.splitlines():
+        if line.strip() and "/mnt" in path:
+            parts = line.strip().split()
+            if len(parts) >= 2 and parts[-1] == "1":
+                return True
+    return False
 
 
 # rclone progress output regex
@@ -441,6 +458,8 @@ def process_job(
     rclone_config: RcloneConfig | None = None,
 ) -> None:
     """Process a single migration job (copy, verify, create NFS share)."""
+    if rclone_config is None:
+        rclone_config = RcloneConfig()
     if SHUTTING_DOWN:
         log_warn(f"Skipping {job_name}: shutting down")
         return
@@ -493,6 +512,17 @@ def process_job(
     success, err = run_rclone_move(
         temp_dir, target_dir, task_id, job_name, rclone_config
     )
+    if not success and "0%" in err:
+        log_warn(
+            f"[Copy] Transfer stalled, retrying with reduced concurrency "
+            f"(transfers={min(rclone_config.transfers, 4)}, streams=1)"
+        )
+        rclone_config.multi_thread_streams = 1
+        rclone_config.transfers = min(rclone_config.transfers, 4)
+        time.sleep(2)
+        success, err = run_rclone_move(
+            temp_dir, target_dir, task_id, job_name, rclone_config
+        )
     if not success:
         if not SHUTTING_DOWN:
             log_error(f"[Copy] Failed for {job_name}.\nReason: {err}")
@@ -581,10 +611,17 @@ def main() -> None:
 
     args = parser.parse_args()
 
+    rotational = is_rotational_disk(args.path)
+    if rotational:
+        log_info(
+            "Detected HDD pool — reducing multi-thread-streams to 1 "
+            "(prevents head thrashing on spinning disks)"
+        )
     rclone_config = RcloneConfig(
         transfers=args.transfers,
         checkers=args.checkers,
         buffer_size=args.buffer_size,
+        multi_thread_streams=(1 if rotational else RcloneConfig.multi_thread_streams),
     )
 
     target_path = Path(args.path)
