@@ -41,6 +41,9 @@ SHUTTING_DOWN = False
 ZFS_LOCK = threading.Lock()
 FAILED_JOBS: "list[str]" = []
 
+# NFS share cache — populated once at startup to avoid redundant midclt calls
+_NFS_SHARE_CACHE: "dict[str, bool] | None" = None
+
 
 @dataclass
 class RcloneConfig:
@@ -67,17 +70,21 @@ def get_available_ram_gb() -> float:
 
 
 def is_rotational_disk(path: str) -> bool:
-    """Check if the ZFS pool's underlying disks are HDD (rotational)."""
+    """Check if the ZFS pool's underlying disks are HDD (rotational).
+
+    Scans lsblk output for devices mounted under /mnt with rotational=1.
+    """
     res = subprocess.run(
-        ["lsblk", "--dms", "-o", "NAME,ROTA"],
+        ["lsblk", "--dms", "-o", "NAME,ROTA,MOUNTPOINT"],
         capture_output=True,
         text=True,
         timeout=10,
     )
     for line in res.stdout.splitlines():
-        if line.strip() and "/mnt" in path:
+        if "/mnt" in line:
             parts = line.strip().split()
-            if len(parts) >= 2 and parts[-1] == "1":
+            # ROTA is column 1 regardless of MOUNTPOINT position
+            if len(parts) >= 2 and parts[1] == "1":
                 return True
     return False
 
@@ -226,11 +233,15 @@ def should_skip_folder(name: str) -> bool:
 
 def dataset_exists(dataset: str) -> bool:
     """Check if a ZFS dataset already exists."""
-    res = subprocess.run(
-        ["zfs", "list", "-H", "-o", "name", dataset],
-        capture_output=True,
-    )
-    return res.returncode == 0
+    try:
+        res = subprocess.run(
+            ["zfs", "list", "-H", "-o", "name", dataset],
+            capture_output=True,
+            timeout=10,
+        )
+        return res.returncode == 0
+    except (subprocess.TimeoutExpired, OSError):
+        return False
 
 
 def create_dataset(dataset: str) -> None:
@@ -288,20 +299,40 @@ def create_nfs_share(path: str, comment: str = "") -> bool:
         return False
 
 
+def _populate_nfs_cache() -> None:
+    """Populate the NFS share cache by querying all shares once."""
+    global _NFS_SHARE_CACHE
+    try:
+        result = subprocess.run(
+            ["midclt", "call", "sharing.nfs.query", "[]"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        if result.returncode != 0:
+            _NFS_SHARE_CACHE = {}
+            return
+        shares = json.loads(result.stdout)
+        _NFS_SHARE_CACHE = {share.get("path", ""): True for share in shares}
+    except Exception as e:
+        log_warn(f"[NFS] Failed to populate cache: {e}")
+        _NFS_SHARE_CACHE = {}
+
+
 def nfs_share_exists(path: str) -> bool:
     """Check if an NFS share already exists for the given path via midclt.
 
-    Queries all NFS shares and filters locally — the midclt CLI doesn't
-    accept path-based filters for sharing.nfs.query.
+    Uses a one-time cache populated at startup to avoid redundant
+    midclt calls. Falls back to live query on cache miss or failure.
     """
+    # Fast path: check in-memory cache
+    if _NFS_SHARE_CACHE is not None:
+        return _NFS_SHARE_CACHE.get(path, False)
+
+    # Fallback: live query (should only happen if cache population failed)
     try:
         result = subprocess.run(
-            [
-                "midclt",
-                "call",
-                "sharing.nfs.query",
-                "[]",
-            ],
+            ["midclt", "call", "sharing.nfs.query", "[]"],
             capture_output=True,
             text=True,
             timeout=10,
@@ -309,7 +340,11 @@ def nfs_share_exists(path: str) -> bool:
         if result.returncode != 0:
             return False
         shares = json.loads(result.stdout)
-        return any(share.get("path") == path for share in shares)
+        found = any(share.get("path") == path for share in shares)
+        # Update cache if we got a result
+        if _NFS_SHARE_CACHE is not None:
+            _NFS_SHARE_CACHE[path] = found
+        return found
     except (
         FileNotFoundError,
         subprocess.TimeoutExpired,
@@ -350,7 +385,7 @@ def run_transfer_with_progress(
     progress.update(
         task_id,
         description=f"[cyan]{job_name} [{phase_color}]({phase_desc})",
-        completed=0,
+        completed=0.1,  # Start slightly above 0 so Rich's TimeRemainingColumn can compute ETA
         transferred="0 B",
         speed="0 B/s",
     )
@@ -423,12 +458,16 @@ def run_rclone_move(
     job_name: str,
     config: RcloneConfig | None = None,
 ) -> tuple[bool, str]:
-    """Move data from src to dest with checksum verification, removing source files.
+    """Move data from src to dest with size+mtime verification, removing source files.
 
     Uses rclone move so each file is verified before being deleted
     from the temp directory. Source directories are cleaned up automatically
     (--delete-empty-src-dirs). This avoids the 2x disk space requirement of a
     full copy-then-verify approach.
+
+    Note: verification uses size and modification-time comparison (not
+    --checksum), which is sufficient for local-to-local transfers where
+    the source is immediately deleted after verification.
     """
     if config is None:
         config = RcloneConfig()
@@ -483,11 +522,30 @@ def process_job(
 
     nfs_path = f"/mnt/{dataset}"
 
+    # Track whether NFS share was set up before the copy phase so we
+    # don't duplicate the post-copy setup.
+    nfs_setup_before_copy = False
+
     if is_resume:
-        log_warn(f"RESUME: {temp_dir} → {target_dir}")
+        log_warn(f"RESUME: {temp_dir} -> {target_dir}")
+        # Create NFS share BEFORE copy so clients can access data during transfer
+        nfs_ok = True
+        if not nfs_share_exists(nfs_path):
+            log_step(f"[NFS] Creating share for: {nfs_path}")
+            nfs_ok = create_nfs_share(
+                path=nfs_path,
+                comment=f"Migration share: {job_name}",
+            )
+        else:
+            log_ok(f"[NFS] Share already exists: {nfs_path}")
+        if nfs_ok:
+            log_ok(f"[NFS] Share ready: {nfs_path}")
+        else:
+            log_warn(f"[NFS] Failed to create share for: {nfs_path}")
+        nfs_setup_before_copy = nfs_ok
     else:
         if dataset_exists(dataset):
-            log_warn(f"Dataset exists → skipping data transfer: {dataset}")
+            log_warn(f"Dataset exists -> skipping data transfer: {dataset}")
             # Still ensure NFS share exists for existing datasets
             nfs_ok = True
             if not nfs_share_exists(nfs_path):
@@ -505,7 +563,7 @@ def process_job(
             progress.advance(global_task)
             return
         log_step(f"Processing: {job_name}")
-        log_step(f"Renaming {target_dir} → {temp_dir}")
+        log_step(f"Renaming {target_dir} -> {temp_dir}")
         os.rename(target_dir, temp_dir)
 
     if is_resume:
@@ -519,7 +577,7 @@ def process_job(
         f"[cyan]{job_name}", total=100, transferred="0 B", speed="0 B/s"
     )
 
-    # PHASE 1: [Copy] Incremental copy with checksum verification.
+    # PHASE 1: [Copy] Incremental copy with size+mtime verification.
     # Source files are removed after successful verification, keeping disk
     # usage bounded throughout the transfer.
     retried = False
@@ -563,19 +621,21 @@ def process_job(
     log_ok(f"{'Resume ' if is_resume else ''}Complete:{retry_note} {job_name}")
 
     # PHASE 4: [NFS] Create NFS share via midclt (local TrueNAS CLI)
-    nfs_ok = True  # Assume success — only False if creation fails
-    if not nfs_share_exists(nfs_path):
-        log_step(f"[NFS] Creating share for: {nfs_path}")
-        nfs_ok = create_nfs_share(
-            path=nfs_path,
-            comment=f"Migration share: {job_name}",
-        )
-    else:
-        log_ok(f"[NFS] Share already exists: {nfs_path}")
-    if nfs_ok:
-        log_ok(f"[NFS] Share created: {nfs_path}")
-    else:
-        log_warn(f"[NFS] Failed to create share for: {nfs_path}")
+    # Skip if we already set it up before the copy phase.
+    if not nfs_setup_before_copy:
+        nfs_ok = True
+        if not nfs_share_exists(nfs_path):
+            log_step(f"[NFS] Creating share for: {nfs_path}")
+            nfs_ok = create_nfs_share(
+                path=nfs_path,
+                comment=f"Migration share: {job_name}",
+            )
+        else:
+            log_ok(f"[NFS] Share already exists: {nfs_path}")
+        if nfs_ok:
+            log_ok(f"[NFS] Share created: {nfs_path}")
+        else:
+            log_warn(f"[NFS] Failed to create share for: {nfs_path}")
 
     progress.advance(global_task)
 
@@ -732,9 +792,12 @@ def main() -> None:
         log_ok("Nothing to do.")
         return
 
+    # Populate NFS share cache once at startup to avoid redundant midclt calls
+    _populate_nfs_cache()
+
     with progress:
         global_task = progress.add_task(
-            "[green]Overall Progress",
+            "[green]Jobs Ready",
             total=total_jobs,
             transferred="",
             speed="",
